@@ -38,4 +38,6 @@ dist/
 **/*_slrt_rtw/
 
 # MATLAB ROS Toolbox自动生成的消息总线转换缓存
+/+bus_conv_fcns/
+/matlab_msg_gen/
 simulink/**/+bus_conv_fcns/

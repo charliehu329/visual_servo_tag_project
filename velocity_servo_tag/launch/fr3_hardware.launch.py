@@ -110,7 +110,7 @@ def generate_launch_description():
 
     declare_max_velocity_scale = DeclareLaunchArgument(
         "max_velocity_scale",
-        default_value="0.10",
+        default_value="0.50",
         description=(
             "Final joint velocity limit as a fraction "
             "of FR3 hardware limits."

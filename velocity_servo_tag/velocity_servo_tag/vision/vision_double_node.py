@@ -4,23 +4,17 @@ vision_double_node.py
 
 功能：
     同时读取左右两个普通 USB 相机，分别检测指定 AprilTag，
-    向 Simulink Stage 1 发布 8 维双目视觉特征。
-    Stage 1 尚未接入变焦硬件，因此同时发布固定 [0.0, 0.0]
-    作为左右镜头累计变焦步数占位值。
+    每当任一相机完成真实新帧处理时，向 Simulink 发布带左右
+    帧序号、近似采集时间、有效位、中心和尺度的自定义消息。
 
 输入：
     左右 USB 相机 RGB 图像。
-    相机 ID、分辨率、目标帧率、AprilTag 参数、超时和 Topic
+    相机 ID、分辨率、目标帧率、AprilTag 参数和 Topic
     均通过 ROS 2 YAML 参数配置。
 
 输出：
-    /vision_double/target_features
-        std_msgs/msg/Float64MultiArray
-        [validL, validR, uL, vL, uR, vR, scaleL, scaleR]
-
-    /vision_double/zoom_position_steps
-        std_msgs/msg/Float64MultiArray
-        [0.0, 0.0]
+    /vision_double/stereo_features
+        velocity_servo_tag_interfaces/msg/StereoFeatures
 
 调用：
     ros2 run velocity_servo_tag vision_double_node \
@@ -28,8 +22,11 @@ vision_double_node.py
 
 方法：
     左右相机各使用一个独立采集线程和 AprilTagDetector，避免顺序读取
-    导致相互阻塞。ROS 2 定时器以配置频率读取线程安全快照，检查检测
-    新鲜度和左右时间差后发布。scale 定义为标签四角像素面积的平方根。
+    导致相互阻塞。每处理一张真实图像，各相机独立增加 uint32 序号；
+    未检测到 Tag 的真实新帧也保存为 valid=false。ROS 2 定时器仅在
+    左右序号发生变化时发布，不把重复快照当成新测量；相机断流时不
+    增加序号，由 Simulink watchdog 处理超时。scale 定义为标签四角
+    像素面积的平方根。焦距由独立节点发布到 /stereo/focal_length。
 """
 
 import math
@@ -40,7 +37,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray
+from velocity_servo_tag_interfaces.msg import StereoFeatures
 
 from velocity_servo_tag.vision.apriltag_detector import (
     AprilTagDetector,
@@ -48,9 +45,9 @@ from velocity_servo_tag.vision.apriltag_detector import (
 from velocity_servo_tag.vision.camera import USBCamera
 from velocity_servo_tag.vision.stereo_features import (
     CameraFeature,
-    ZOOM_POSITION_PLACEHOLDER,
-    build_stereo_feature_vector,
     compute_tag_scale,
+    next_frame_sequence,
+    split_timestamp_ns,
 )
 
 
@@ -95,6 +92,7 @@ class StereoCameraWorker:
         self._corners = None
 
         self._target_was_detected = False
+
     def start(self):
         """启动后台采集线程。"""
 
@@ -150,14 +148,29 @@ class StereoCameraWorker:
 
     def _store_result(
         self,
-        feature,
+        valid,
+        capture_stamp_ns,
+        u=0.0,
+        v=0.0,
+        scale=0.0,
         image_rgb=None,
         corners=None,
     ):
-        """原子更新该相机的最近检测快照。"""
+        """保存一张真实新帧的检测结果并增加帧序号。"""
 
         with self._lock:
-            self._feature = feature
+            self._feature = CameraFeature(
+                sequence=next_frame_sequence(
+                    self._feature.sequence
+                ),
+                capture_stamp_ns=int(
+                    capture_stamp_ns
+                ),
+                valid=bool(valid),
+                u=float(u),
+                v=float(v),
+                scale=float(scale),
+            )
 
             if self.keep_display_image:
                 self._image_rgb = (
@@ -171,15 +184,16 @@ class StereoCameraWorker:
                     else corners.copy()
                 )
 
-    def _publish_invalid_snapshot(
+    def _store_invalid_frame(
         self,
-        stamp,
+        capture_stamp_ns,
         image_rgb=None,
     ):
-        """在相机或检测无效时保存零特征。"""
+        """保存一张真实但未检测到有效Tag的新帧。"""
 
         self._store_result(
-            CameraFeature(stamp=float(stamp)),
+            valid=False,
+            capture_stamp_ns=capture_stamp_ns,
             image_rgb=image_rgb,
             corners=None,
         )
@@ -213,10 +227,6 @@ class StereoCameraWorker:
                         f"{self.reopen_delay_sec:.1f} s."
                     )
 
-                self._publish_invalid_snapshot(
-                    time.monotonic()
-                )
-
             finally:
                 if camera is not None:
                     camera.release()
@@ -235,13 +245,10 @@ class StereoCameraWorker:
 
         while not self._stop_event.is_set():
             image_rgb = camera.read()
-            capture_stamp = time.monotonic()
+            capture_monotonic = time.monotonic()
 
             if image_rgb is None:
                 self.detector.reset_tracking_state()
-                self._publish_invalid_snapshot(
-                    capture_stamp
-                )
 
                 if self._target_was_detected:
                     self.logger.warning(
@@ -253,14 +260,15 @@ class StereoCameraWorker:
                 self._stop_event.wait(0.01)
                 continue
 
+            capture_stamp_ns = time.time_ns()
             frame_count += 1
             feature_uv = self.detector.detect(
                 image_rgb
             )
 
             if feature_uv is None:
-                self._publish_invalid_snapshot(
-                    capture_stamp,
+                self._store_invalid_frame(
+                    capture_stamp_ns,
                     image_rgb=image_rgb,
                 )
 
@@ -286,23 +294,19 @@ class StereoCameraWorker:
                         f"{self.side_name} invalid tag "
                         f"corners: {error}"
                     )
-                    self._publish_invalid_snapshot(
-                        capture_stamp,
+                    self._store_invalid_frame(
+                        capture_stamp_ns,
                         image_rgb=image_rgb,
                     )
                     self._target_was_detected = False
                     continue
 
-                camera_feature = CameraFeature(
+                self._store_result(
                     valid=True,
+                    capture_stamp_ns=capture_stamp_ns,
                     u=float(feature_uv[0]),
                     v=float(feature_uv[1]),
                     scale=float(scale),
-                    stamp=capture_stamp,
-                )
-
-                self._store_result(
-                    camera_feature,
                     image_rgb=image_rgb,
                     corners=corners,
                 )
@@ -315,7 +319,7 @@ class StereoCameraWorker:
                 self._target_was_detected = True
 
             measurement_elapsed = (
-                capture_stamp - measurement_start
+                capture_monotonic - measurement_start
             )
 
             if measurement_elapsed >= 10.0:
@@ -327,11 +331,11 @@ class StereoCameraWorker:
                     f"processing FPS: {actual_fps:.2f}."
                 )
                 frame_count = 0
-                measurement_start = capture_stamp
+                measurement_start = capture_monotonic
 
 
 class VisionDoubleNode(Node):
-    """发布 Stage 1 双目 AprilTag 特征和 Zoom 零占位。"""
+    """仅在真实新图像到达时发布双目AprilTag自定义消息。"""
 
     def __init__(self):
         """读取 ROS 2 参数并启动两个独立相机工作线程。"""
@@ -381,18 +385,13 @@ class VisionDoubleNode(Node):
         )
 
         self.feature_publisher = self.create_publisher(
-            Float64MultiArray,
-            self.target_features_topic,
+            StereoFeatures,
+            self.stereo_features_topic,
             1,
         )
-        self.zoom_position_publisher = (
-            self.create_publisher(
-                Float64MultiArray,
-                self.zoom_position_topic,
-                1,
-            )
-        )
 
+        self.last_published_left_sequence = 0
+        self.last_published_right_sequence = 0
         self.last_valid_state = None
         self.window_failed = False
 
@@ -410,9 +409,8 @@ class VisionDoubleNode(Node):
             f"right_camera={self.right_camera_index} | "
             f"image={self.camera_width}x"
             f"{self.camera_height}@{self.camera_fps:.1f} Hz | "
-            f"publish={self.publish_rate_hz:.1f} Hz | "
-            f"features={self.target_features_topic} | "
-            f"zoom_placeholder={self.zoom_position_topic}"
+            f"poll={self.publish_rate_hz:.1f} Hz | "
+            f"features={self.stereo_features_topic}"
         )
 
     def _declare_parameters(self):
@@ -441,25 +439,13 @@ class VisionDoubleNode(Node):
         self.declare_parameter("uv_filter_alpha", 0.4)
 
         self.declare_parameter(
-            "feature_timeout_sec",
-            0.10,
-        )
-        self.declare_parameter(
-            "max_pair_skew_sec",
-            0.05,
-        )
-        self.declare_parameter(
             "camera_reopen_delay_sec",
             2.0,
         )
 
         self.declare_parameter(
-            "target_features_topic",
-            "/vision_double/target_features",
-        )
-        self.declare_parameter(
-            "zoom_position_topic",
-            "/vision_double/zoom_position_steps",
+            "stereo_features_topic",
+            "/vision_double/stereo_features",
         )
         self.declare_parameter("show_window", True)
 
@@ -520,30 +506,15 @@ class VisionDoubleNode(Node):
             ).value
         )
 
-        self.feature_timeout_sec = float(
-            self.get_parameter(
-                "feature_timeout_sec"
-            ).value
-        )
-        self.max_pair_skew_sec = float(
-            self.get_parameter(
-                "max_pair_skew_sec"
-            ).value
-        )
         self.reopen_delay_sec = float(
             self.get_parameter(
                 "camera_reopen_delay_sec"
             ).value
         )
 
-        self.target_features_topic = str(
+        self.stereo_features_topic = str(
             self.get_parameter(
-                "target_features_topic"
-            ).value
-        )
-        self.zoom_position_topic = str(
-            self.get_parameter(
-                "zoom_position_topic"
+                "stereo_features_topic"
             ).value
         )
         self.show_window = bool(
@@ -551,7 +522,7 @@ class VisionDoubleNode(Node):
         )
 
     def _validate_parameters(self):
-        """检查相机、检测器、超时和 Topic 参数。"""
+        """检查相机、检测器、轮询频率和Topic参数。"""
 
         if self.left_camera_index < 0:
             raise ValueError(
@@ -579,9 +550,6 @@ class VisionDoubleNode(Node):
             "detector_threads_per_camera": (
                 self.detector_threads_per_camera
             ),
-            "feature_timeout_sec": (
-                self.feature_timeout_sec
-            ),
             "camera_reopen_delay_sec": (
                 self.reopen_delay_sec
             ),
@@ -596,30 +564,13 @@ class VisionDoubleNode(Node):
                     f"{name} 必须为有限正数。"
                 )
 
-        if (
-            not math.isfinite(
-                self.max_pair_skew_sec
-            )
-            or self.max_pair_skew_sec < 0.0
-        ):
+        if not self.stereo_features_topic:
             raise ValueError(
-                "max_pair_skew_sec必须为有限非负数。"
-            )
-
-        if not self.target_features_topic:
-            raise ValueError(
-                "target_features_topic 不能为空。"
-            )
-
-        if not self.zoom_position_topic:
-            raise ValueError(
-                "zoom_position_topic 不能为空。"
+                "stereo_features_topic 不能为空。"
             )
 
     def _publish_callback(self):
-        """发布双目特征和固定 Zoom 位置占位值。"""
-
-        now = time.monotonic()
+        """仅在左右真实帧序号发生变化时发布一次最新快照。"""
 
         left_feature, left_image, left_corners = (
             self.left_worker.snapshot(
@@ -632,29 +583,32 @@ class VisionDoubleNode(Node):
             )
         )
 
-        feature_vector = build_stereo_feature_vector(
-            left_feature=left_feature,
-            right_feature=right_feature,
-            now=now,
-            timeout=self.feature_timeout_sec,
-            max_pair_skew=self.max_pair_skew_sec,
+        left_sequence_changed = (
+            left_feature.sequence
+            != self.last_published_left_sequence
+        )
+        right_sequence_changed = (
+            right_feature.sequence
+            != self.last_published_right_sequence
         )
 
-        feature_message = Float64MultiArray()
-        feature_message.data = feature_vector.tolist()
-        self.feature_publisher.publish(feature_message)
+        if left_sequence_changed or right_sequence_changed:
+            feature_message = self._make_feature_message(
+                left_feature,
+                right_feature,
+            )
+            self.feature_publisher.publish(feature_message)
 
-        zoom_message = Float64MultiArray()
-        zoom_message.data = list(
-            ZOOM_POSITION_PLACEHOLDER
-        )
-        self.zoom_position_publisher.publish(
-            zoom_message
-        )
+            self.last_published_left_sequence = (
+                left_feature.sequence
+            )
+            self.last_published_right_sequence = (
+                right_feature.sequence
+            )
 
         valid_state = (
-            bool(feature_vector[0]),
-            bool(feature_vector[1]),
+            bool(left_feature.valid),
+            bool(right_feature.valid),
         )
 
         if valid_state != self.last_valid_state:
@@ -676,6 +630,50 @@ class VisionDoubleNode(Node):
                 left_valid=valid_state[0],
                 right_valid=valid_state[1],
             )
+
+    @staticmethod
+    def _make_feature_message(
+        left_feature,
+        right_feature,
+    ):
+        """将左右最新真实帧快照转换为StereoFeatures消息。"""
+
+        message = StereoFeatures()
+        message.left_sequence = int(
+            left_feature.sequence
+        )
+        message.right_sequence = int(
+            right_feature.sequence
+        )
+
+        left_sec, left_nanosec = split_timestamp_ns(
+            left_feature.capture_stamp_ns
+        )
+        right_sec, right_nanosec = split_timestamp_ns(
+            right_feature.capture_stamp_ns
+        )
+
+        message.left_capture_stamp.sec = left_sec
+        message.left_capture_stamp.nanosec = left_nanosec
+        message.right_capture_stamp.sec = right_sec
+        message.right_capture_stamp.nanosec = (
+            right_nanosec
+        )
+
+        message.valid_left = bool(left_feature.valid)
+        message.valid_right = bool(
+            right_feature.valid
+        )
+        message.u_left = float(left_feature.u)
+        message.v_left = float(left_feature.v)
+        message.u_right = float(right_feature.u)
+        message.v_right = float(right_feature.v)
+        message.scale_left = float(left_feature.scale)
+        message.scale_right = float(
+            right_feature.scale
+        )
+
+        return message
 
     def _draw_camera_view(
         self,
@@ -836,26 +834,8 @@ class VisionDoubleNode(Node):
                 f"{error}"
             )
 
-    def _publish_safe_shutdown_messages(self):
-        """退出前发布一次无效视觉特征和 Zoom 零位置。"""
-
-        feature_message = Float64MultiArray()
-        feature_message.data = [0.0] * 8
-        self.feature_publisher.publish(feature_message)
-
-        zoom_message = Float64MultiArray()
-        zoom_message.data = list(
-            ZOOM_POSITION_PLACEHOLDER
-        )
-        self.zoom_position_publisher.publish(
-            zoom_message
-        )
-
     def destroy_node(self):
         """停止线程、释放相机和窗口，然后销毁 ROS 2 节点。"""
-
-        if rclpy.ok():
-            self._publish_safe_shutdown_messages()
 
         self.left_worker.stop()
         self.right_worker.stop()

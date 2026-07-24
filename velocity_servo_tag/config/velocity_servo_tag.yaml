@@ -6,21 +6,23 @@
 vision_double_node:
   ros__parameters:
     # 左右USB相机编号，部署前根据/dev/video*实际映射修改。
-    left_camera_index: 0
-    right_camera_index: 1
+    left_camera_index: 2
+    right_camera_index: 0
 
-    camera_width: 640
-    camera_height: 480
+    camera_width: 1920
+    camera_height: 1080
     camera_fps: 60.0
 
-    # ROS 2特征和Zoom占位消息的目标发布频率。
-    publish_rate_hz: 60.0
+    # 检查左右相机新帧序号并刷新预览窗口的频率
+    # 因为现在是左右相机任意一帧更新就会发布，我们把发布定时器发送频率提高可以让simulink尽快接收最新信息
+    # 且simulink会自己去进行sequence配对，来匹配哪两帧是同一时刻的。
+    publish_rate_hz: 120.0
 
     tag_family: "tag36h11"
     target_tag_id: 0
 
     # 左右相机各自创建一个检测器。
-    detector_threads_per_camera: 2
+    detector_threads_per_camera: 6
     quad_decimate: 1.0
     quad_sigma: 0.0
     refine_edges: true
@@ -29,21 +31,14 @@ vision_double_node:
     # 一阶低通滤波系数，1.0表示不滤波。
     uv_filter_alpha: 0.4
 
-    # 检测结果超过该时间后，对应valid自动置零。
-    feature_timeout_sec: 0.10
-
-    # 左右有效结果时间差过大时，较旧一侧valid置零。
-    max_pair_skew_sec: 0.05
-
     # USB相机打开失败后的重试间隔。
     camera_reopen_delay_sec: 2.0
 
-    target_features_topic: "/vision_double/target_features"
-    zoom_position_topic: "/vision_double/zoom_position_steps"
+    # 仅在任一相机处理完成真实新帧时发布。
+    stereo_features_topic: "/vision_double/stereo_features"
 
-    # Stage 1节点会固定发布[0.0, 0.0] Zoom位置，不控制电机。
     # 是否显示左右相机OpenCV预览窗口。
-    show_window: true
+    show_window: false
 
 
 apriltag_detector:
@@ -79,17 +74,18 @@ velocity_command_node:
     publish_rate_hz: 120.0
 
     # 相对于FR3官方关节速度上限的最终保护比例。
-    max_velocity_scale: 0.10
+    max_velocity_scale: 0.50
 
-    # 底层命令桥接层的加速度限制，单位rad/s²。
+    # 底层命令桥接层的加速度限制，七维速度增量整组同比例缩放。
+    # 120 Hz下的0.40 rad/s²与Core 60 Hz下的0.20 rad/s²单周期增量相同。
     max_joint_accelerations:
-      - 0.20
-      - 0.20
-      - 0.20
-      - 0.20
-      - 0.20
-      - 0.20
-      - 0.20
+      - 0.40
+      - 0.40
+      - 0.40
+      - 0.40
+      - 0.40
+      - 0.40
+      - 0.40
 
     # Simulink停止发布后，超过此时间开始平滑减速。
     target_velocity_timeout_sec: 0.15
@@ -99,30 +95,39 @@ velocity_command_node:
     command_topic: "/joint_velocity_example_controller/commands"
 
 
-# Stage 1 Simulink ROS 2包装模型接口。
+# 当前Simulink ROS 2包装模型接口。
 # 这里集中记录接口约定；topic修改后需同步修改SLX中的ROS 2 Block。
 simulink_ros2:
   ros__parameters:
-    sample_time_sec: 0.008333333333333333
-    vision_topic: "/vision_double/target_features"
+    sample_time_sec: 0.016666666666666666
+
+    # Python端只在左右相机产生真实新帧时发布该自定义消息。
+    vision_topic: "/vision_double/stereo_features"
+    vision_message_type: "velocity_servo_tag_interfaces/StereoFeatures"
+
     joint_state_topic: "/franka/joint_states"
-    zoom_position_topic: "/vision_double/zoom_position_steps"
+    joint_state_message_type: "sensor_msgs/JointState"
+
+    # 由独立焦距反馈节点发布，vision_double_node不再发布Zoom占位值。
+    focal_length_topic: "/stereo/focal_length"
     reset_topic: "/simulink/reset"
 
     joint_velocity_topic: "/simulink/target_joints_velocities"
-    zoom_step_rate_topic: "/simulink/zoom_step_rate_cmd"
+    focal_rate_topic: "/simulink/focal_rate_cmd"
     controller_status_topic: "/simulink/controller_status"
 
     # 这些数值由stereo_ibvs_config.m实际加载；此处只记录接口约定。
     joint_state_timeout_sec: 0.10
     vision_timeout_sec: 0.10
+    stereo_max_pair_skew_sec: 0.05
     target_loss_frame_limit: 3
     target_recovery_frame_count: 3
     target_valid_source: "validL"
 
     vision_message_length: 8
     joint_position_message_length: 7
-    zoom_position_message_length: 2
+    joint_velocity_feedback_message_length: 7
+    focal_length_message_length: 2
     joint_velocity_message_length: 7
-    zoom_step_rate_message_length: 2
-    controller_status_message_length: 12
+    focal_rate_message_length: 2
+    controller_status_message_length: 13

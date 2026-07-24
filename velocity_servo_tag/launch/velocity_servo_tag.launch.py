@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
-vision_double.launch.py
+velocity_servo_tag.launch.py
 
 功能：
-    使用统一YAML启动Stage 1双目AprilTag视觉节点。
+    启动Stage 1双目AprilTag视觉节点。
 
 输入：
-    params_file：ROS 2参数文件路径。
+    params_file：统一ROS 2 YAML参数文件。
+    start_vision：是否启动vision_double_node。
 
 输出：
-    /vision_double/target_features
-    /vision_double/zoom_position_steps
+    /vision_double/stereo_features
+        velocity_servo_tag_interfaces/msg/StereoFeatures
 
 调用：
-    ros2 launch velocity_servo_tag vision_double.launch.py
+    ros2 launch velocity_servo_tag velocity_servo_tag.launch.py
 
 方法：
-    从已安装包的config目录查找默认YAML，并启动vision_double_node。
+    使用YAML配置左右USB相机和AprilTag检测参数。本Launch不启动
+    MATLAB/Simulink、Franka硬件、焦距反馈节点或
+    velocity_command_node。
 """
 
 import os
@@ -26,12 +29,13 @@ from ament_index_python.packages import (
 )
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    """创建双目视觉节点的LaunchDescription。"""
+    """创建Stage 1双目视觉LaunchDescription。"""
 
     package_share = get_package_share_directory(
         "velocity_servo_tag"
@@ -45,12 +49,22 @@ def generate_launch_description():
     params_file = LaunchConfiguration(
         "params_file"
     )
+    start_vision = LaunchConfiguration(
+        "start_vision"
+    )
 
     declare_params_file = DeclareLaunchArgument(
         "params_file",
         default_value=default_params_file,
         description=(
             "Unified velocity_servo_tag YAML file."
+        ),
+    )
+    declare_start_vision = DeclareLaunchArgument(
+        "start_vision",
+        default_value="true",
+        description=(
+            "Start the dual-camera AprilTag node."
         ),
     )
 
@@ -60,12 +74,14 @@ def generate_launch_description():
         name="vision_double_node",
         output="screen",
         emulate_tty=True,
+        condition=IfCondition(start_vision),
         parameters=[params_file],
     )
 
     return LaunchDescription(
         [
             declare_params_file,
+            declare_start_vision,
             vision_double_node,
         ]
     )

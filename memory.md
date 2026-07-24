@@ -209,6 +209,7 @@ Stage 1 双目视觉节点代码已经完成：
 3:修改的原因，目的，作用
 4:备注（可选写和不写）
 
+
 ## 2026-07-21：完成 Stage 1 ROS 2 包装模型
 
 修改文件：
@@ -473,6 +474,95 @@ memory.md
 - 修改：按逐文件格式记录本次 README 配置说明更新和时间。
 - 目的：保证后续工作能够追踪配置文档的修改原因。
 
+
+## 2026-07-24 03:13：记录 V2 重构对齐方案与待办
+
+### 1：修改什么文件
+
+`memory.md`
+
+### 2：修改了什么内容
+
+记录以下已确认、尚未实施的待办：
+
+1. Core 关节速度限制改为七维整组同比例缩放，算法层上限设为每轴 `0.03 rad/s`，保持控制器给出的关节速度方向；参数注释同时写明 FR3 官方全局关节速度上限为 `[2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26] rad/s`，官方上限继续作为硬件能力边界。
+2. Core 新增七维整组同比例加速度限制，算法层上限设为每轴 `0.20 rad/s²`；按照 `cfg.Ts` 和上一周期实际输出计算允许的速度增量。
+3. Python 保留 `max_velocity_scale = 0.10` 作为比 Core 宽松的最终速度安全保护，并继续按 FR3 官方关节速度上限计算各轴最终上限，再对七维速度整组同比例缩放。
+4. Python 加速度上限改为每轴 `0.40 rad/s²`，加速度限制也改为七维整组同比例缩放。Core 为 `60 Hz` 时，`0.20 / 60 ≈ 0.00333 rad/s`；Python 为 `120 Hz` 时，`0.40 / 120 ≈ 0.00333 rad/s`，因此正常运行时 Python 基本不会对 Core 输出进行二次限幅。
+5. 新建独立 ROS 2 自定义接口包，视觉消息包含左右特征、左右帧序号和左右采集时间；Python 只在相机实际处理新帧时发布，未检测到 Tag 的新帧也发布 `valid=false`，相机断流时停止发布并交给 watchdog。
+6. 左右相机独立更新：左相机新帧可以单独更新中心控制任务；只有左右都出现新的合格配对时，才更新双目深度和 EKF。
+7. ROS 2 包装层按照 `JointState.name` 将 `position` 和 `velocity` 重排为 FR3 固定关节顺序，并检查消息时间戳、长度和新鲜度；`qMeasured` 用于运动学，`qDotMeasured` 用于相机速度与 `rhoDot`，Python 最终命令只用于安全转发和诊断。
+
+### 3：修改的原因、目的、作用
+
+使当前 ROS 架构尽量复现已通过仿真验证的 V2 控制逻辑，同时避免逐关节裁剪改变七维速度方向；明确 Core 与 Python 两层速度、加速度保护的职责，并保证 EKF 只使用真实的新视觉测量和机器人实际速度反馈。
+
+### 4：备注
+
+本次只记录方案，没有修改 MATLAB、Simulink、Python、ROS 2 消息或配置文件；后续实施前仍需再次确认并由用户明确开始。
+
+## 2026-07-24 03:28：Core 关节速度改为整组同比例限幅
+
+### `simulink/config/stereo_ibvs_config.m`
+
+- 修改：保留 Core 每轴 `0.03 rad/s` 算法层速度上限，并在参数旁注明 FR3 官方全局关节速度上限 `[2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26] rad/s`；明确 `cfg.qDotMax` 继续作为硬件能力边界。
+- 原因、目的、作用：区分算法实验速度与机器人官方硬件速度能力，避免后续调参时混淆两层限制。
+
+### `simulink/build/core/build_stereo_ibvs_core.m`
+
+- 修改：将 09 安全模块的关节速度限制由逐关节裁剪改为七维整组同比例缩放；先计算各轴超限比例，再用全组最大比例统一缩小七维速度。
+- 原因、目的、作用：在未触发关节软限位等安全例外时保持控制器输出的七维速度方向，避免逐轴裁剪改变机械臂运动方向。
+- 备注：按用户要求只维护完整 Core Build；`build_09_safety_and_saturation.m` 未保留本次修改。
+
+### `simulink/core/stereo_ibvs_core.slx`
+
+- 修改：使用完整 `build_stereo_ibvs_core.m` 重新生成 Core 模型，使 09 安全模块采用新的整组同比例限速逻辑。
+- 原因、目的、作用：保证当前可直接加载的 Core 模型与唯一完整构建脚本一致。
+- 备注：MATLAB R2025b 完整构建和 Update Diagram 均通过；09 子系统 `10` 个输入、`15` 个输出全部保持连接。超限测试缩放系数为 `2.0`，最大绝对关节速度为 `0.03 rad/s`，归一化方向误差为 `0`。
+
+### `memory.md`
+
+- 修改：记录本次配置、完整构建脚本、生成模型和验证结果。
+- 原因、目的、作用：保证后续工作能够追踪 Core 限速逻辑从逐轴裁剪改为整组同比例缩放的原因和验证范围。
+- 备注：完整 Build 自动生成了两个未跟踪备份文件 `stereo_ibvs_core_backup_20260724_032051.slx` 和 `stereo_ibvs_core_backup_20260724_032606.slx`，用于恢复，不纳入本次建议提交。
+
+## 2026-07-24 03:37：Core 与 Python 加速度改为整组同比例限制
+
+### `simulink/config/stereo_ibvs_config.m`
+
+- 修改：新增 `cfg.qDDotAlgorithmMax = 0.20 * ones(7,1)`，作为 Core 算法层关节加速度上限。
+- 原因、目的、作用：集中配置 Core 的七维速度增量限制，保证每个控制周期按 `cfg.Ts` 正确换算允许增量。
+
+### `simulink/build/core/build_stereo_ibvs_core.m`
+
+- 修改：为 09 安全模块增加上一周期 `qDotApplied` 反馈输入和 `qDDotAlgorithmMax` 常量；速度限幅后计算目标速度增量，并按七轴最大加速度比例统一缩放；关节软限位与笛卡尔速度保护继续作为更高优先级安全约束。
+- 原因、目的、作用：在正常控制过程中限制速度变化率，同时保持七维速度增量方向；使用已有 Unit Delay 显式反馈，避免在 MATLAB Function 内隐藏状态。
+- 备注：只修改完整 Core Build，没有修改任何单模块 Build 文件。
+
+### `simulink/core/stereo_ibvs_core.slx`
+
+- 修改：使用完整 Build 重新生成模型；09 安全模块增加第 `11` 个输入，用于接收上一周期实际输出速度。
+- 原因、目的、作用：使当前 Core 模型实际执行 `0.20 rad/s²` 的整组同比例加速度限制。
+- 备注：MATLAB R2025b 完整构建和 Update Diagram 通过；09 子系统为 `11` 个输入、`15` 个输出，MATLAB Function 为 `30` 个输入。测试最大加速度为 `0.20 rad/s²`，速度增量方向误差为 `0`。
+
+### `velocity_servo_tag/velocity_command_node.py`
+
+- 修改：默认加速度上限由每轴 `0.20 rad/s²` 改为 `0.40 rad/s²`；删除逐轴 `np.clip`，改为根据七轴最大超限比例统一缩放速度增量；同步更新文件说明和函数注释。
+- 原因、目的、作用：保持七维速度增量方向，并让 Python 作为比 Core 更宽松的最终安全转发层。
+- 备注：`python3 -m py_compile` 通过；静态公式测试最大加速度为 `0.40 rad/s²`。
+
+### `config/velocity_servo_tag.yaml`
+
+- 修改：七个 `max_joint_accelerations` 参数全部改为 `0.40`，并注明 Python `120 Hz` 与 Core `60 Hz` 下的单周期允许速度增量均约为 `0.00333 rad/s`。
+- 原因、目的、作用：使运行时 YAML 参数与 Python 默认值和 Core/Python 分层限幅设计一致。
+- 备注：YAML 解析与七维参数值检查通过。
+
+### `memory.md`
+
+- 修改：记录本次 Core、Python、YAML、生成模型和验证结果。
+- 原因、目的、作用：明确速度与加速度限幅均已改为整组同比例缩放，并记录两层加速度参数的配合关系。
+- 备注：完整 Build 新生成未跟踪备份 `stereo_ibvs_core_backup_20260724_033541.slx`，用于恢复，不纳入建议提交。
+
 # 实现计划
 
 说明：如果有分步实行的stage1，2，3，可以记录
@@ -499,7 +589,231 @@ memory.md
 
 - Simulink 的主要工作区参数由 `stereo_ibvs_config.m` 设置；模型块内部仍可能包含自身参数；
 - Python 节点读取 `velocity_servo_tag.yaml`，Simulink `.slx` 当前不会读取这个 YAML；
-- YAML 中现有 `simulink_ros2` 段只是接口记录，不会自动创建或修改 Simulink 接口；当前记录已与 `.slx` 的 `1/120 s` 和 `/simulink/target_joints_velocities` 对齐；
+- YAML 中现有 `simulink_ros2` 段只是接口记录，不会自动创建或修改 Simulink 接口；当前记录已与 `.slx` 的 `1/60 s`、自定义双目特征接口和 `/simulink/target_joints_velocities` 对齐；
 - ROS 包装安全参数实际由 `stereo_ibvs_config.m` 加载：Joint/Vision 超时 `0.10 s`、丢失 `3` 帧停止、恢复 `3` 帧使能，目标来源为左相机 `validL`；
 - 当前 `cameraMountCalibrated`、`cameraIntrinsicsCalibrated`、`stereoCalibrationValid` 和 `zoomCalibrationValid` 均为 `false`；
 - 后续手眼、双目和变焦标定结果计划独立保存在 `simulink/calibration/`。
+
+## 2026-07-24 13:22：搭建 Core 配套 ROS 2 层与自定义视觉接口
+
+### `simulink/config/stereo_ibvs_config.m`
+
+1. 修改什么文件：`simulink/config/stereo_ibvs_config.m`
+2. 修改了什么内容：新增 JointState、自定义双目特征、复位、关节速度命令和控制状态的 Topic 与消息类型；增加 FR3 期望关节名、双目最大配对时间差和 JointState 超时帧数。
+3. 修改的原因、目的、作用：集中管理 ROS 2 包装模型的全部接口参数，并为按名称重排关节状态和判断新双目配对提供配置。
+4. 备注：Core 仍为 `60 Hz`；视觉超时与 JointState 超时均为 `0.10 s`。
+
+### `simulink/build/core/build_stereo_ibvs_core.m`
+
+1. 修改什么文件：`simulink/build/core/build_stereo_ibvs_core.m`
+2. 修改了什么内容：Core 顶层输入扩展为 `10` 个；新增 `qDotMeasuredRaw`、左相机真实新帧和新双目配对事件；01 模块保存实测关节速度并按左帧监督视觉新鲜度；05 EKF 只接收新双目配对事件；06 逆深度动态使用 `JointState.velocity`；09 加速度限幅继续使用 Core 自身上一周期 `qDotApplied`。
+3. 修改的原因、目的、作用：让需要机器人运动反馈的估计使用真实关节速度，同时避免将经过真实机器人和底层滤波的速度错误用于 Core 自身命令加速度限幅。
+4. 备注：JointState 或视觉超时后，06 的 `motionFeedbackValid` 由 `controllerEnableSafe` 拉低，不再使用保存的旧速度估计 `rhoDot`。
+
+### `simulink/core/stereo_ibvs_core.slx`
+
+1. 修改什么文件：`simulink/core/stereo_ibvs_core.slx`
+2. 修改了什么内容：使用唯一完整 Core Build 重新生成 `10` 输入、`3` 输出模型，并包含新的实测速度和视觉事件链路。
+3. 修改的原因、目的、作用：保证当前可加载模型与完整构建脚本一致。
+4. 备注：MATLAB R2025b 完整构建和 Update Diagram 通过；结构断言确认 06 的第 7 输入来自实测 `qDot`、第 8 输入来自安全使能，`qDot Applied Delay` 仅连接 09 的第 11 输入。
+
+### `simulink/build/ros/build_stereo_ibvs_ros.m`
+
+1. 修改什么文件：`simulink/build/ros/build_stereo_ibvs_ros.m`
+2. 修改了什么内容：新增完整 ROS 2 包装模型构建入口；订阅 JointState、自定义双目特征、焦距和复位；按照 `JointState.name` 重排 `position/velocity`；根据左右帧序号和采集时刻产生左帧事件与新双目配对事件；封装并发布关节速度、焦距速度和 13 维状态。
+3. 修改的原因、目的、作用：将 Core 接入真实 ROS 2 数据流，同时保持 ROS 消息处理与控制算法分层。
+4. 备注：关节名先在 Simulink 块层转换为固定 `uint8` 字节和长度向量，再进入 MATLAB Function；避免把 ROS 字符串总线数组直接送入算法函数。`checkcode` 无问题。
+
+### `simulink/ros2/stereo_ibvs_ros.slx`
+
+1. 修改什么文件：`simulink/ros2/stereo_ibvs_ros.slx`
+2. 修改了什么内容：由新 ROS Build 生成最终包装模型，引用 `stereo_ibvs_core`，连接 `10` 个输入和 `3` 个输出，并包含四个订阅接口与三个发布接口。
+3. 修改的原因、目的、作用：提供可以直接打开检查、后续部署和联调的 ROS 2 模型。
+4. 备注：完整构建和 Update Diagram 均通过；结构断言确认 Topic、消息类型、Core 端口数及关键估计连线正确。
+
+### `velocity_servo_tag_interfaces/msg/StereoFeatures.msg`
+
+1. 修改什么文件：`/Users/hlc/Desktop/Sustech/Franka_python/velocity_servo_tag_interfaces/msg/StereoFeatures.msg`
+2. 修改了什么内容：定义左右 `uint32` 帧序号、左右 `builtin_interfaces/Time` 采集时刻、左右有效位、中心像素和尺度特征；不保留多余的总 Header。
+3. 修改的原因、目的、作用：让 Simulink 能区分真实新帧、左右独立更新和新的时间合格双目配对；`uint32` 避免 MATLAB 将 ROS `uint64` 转为 `double`。
+4. 备注：`60 Hz` 连续运行约 `2.27` 年后序号才回绕；Python 发布端本次未修改。
+
+### `velocity_servo_tag_interfaces/CMakeLists.txt`
+
+1. 修改什么文件：`/Users/hlc/Desktop/Sustech/Franka_python/velocity_servo_tag_interfaces/CMakeLists.txt`
+2. 修改了什么内容：建立 `ament_cmake`/`rosidl_default_generators` 消息生成配置，并声明 `builtin_interfaces` 依赖。
+3. 修改的原因、目的、作用：使自定义视觉消息能够作为独立 ROS 2 接口包构建。
+4. 备注：MATLAB `ros2genmsg` 调用 colcon 构建成功。
+
+### `velocity_servo_tag_interfaces/package.xml`
+
+1. 修改什么文件：`/Users/hlc/Desktop/Sustech/Franka_python/velocity_servo_tag_interfaces/package.xml`
+2. 修改了什么内容：新增独立接口包清单、rosidl 生成/运行依赖和 `rosidl_interface_packages` 组声明。
+3. 修改的原因、目的、作用：让 ROS 2 工作区正确识别并按接口包方式构建。
+4. 备注：XML 语法检查通过。
+
+### `package.xml`
+
+1. 修改什么文件：`package.xml`
+2. 修改了什么内容：主包新增 `velocity_servo_tag_interfaces` 依赖。
+3. 修改的原因、目的、作用：为后续 Python 视觉节点切换到自定义消息建立依赖关系。
+4. 备注：本次没有修改 Python 发布逻辑。
+
+### `config/velocity_servo_tag.yaml`
+
+1. 修改什么文件：`config/velocity_servo_tag.yaml`
+2. 修改了什么内容：更新 `simulink_ros2` 接口记录为 `60 Hz`、自定义视觉 Topic/类型、JointState、焦距 mm 接口、焦距速度 mm/s 接口、双目配对阈值和 13 维状态长度。
+3. 修改的原因、目的、作用：使 YAML 中的接口说明与新 Core/ROS 模型保持一致。
+4. 备注：Ruby YAML 解析和关键字段断言通过；该段仍是接口记录，不会自动配置 Simulink。
+
+### `memory.md`
+
+1. 修改什么文件：`memory.md`
+2. 修改了什么内容：记录本次 Core、ROS Build、自定义接口包、生成模型、接口约定和验证结果。
+3. 修改的原因、目的、作用：为后续 Python 端按新帧发布自定义消息和真实 ROS 2 联调保留可追踪依据。
+4. 备注：本机离线 ROS 2 烟雾仿真中，MathWorks DDS 服务在 macOS 上先出现线程亲和性和互斥锁崩溃，随后 Subscriber 报总线错误；最小 JointState 模型也出现同一 DDS 后端崩溃，因此未把该项计为模型通过或失败。生成的 `matlab_msg_gen/`、`+bus_conv_fcns/` 和 Build 备份均不建议纳入源码提交。
+
+## 2026-07-24 13:30：忽略 MATLAB ROS 自动生成目录
+
+### `.gitignore`
+
+1. 修改什么文件：`.gitignore`
+2. 修改了什么内容：新增仓库根目录 `/+bus_conv_fcns/` 和 `/matlab_msg_gen/` 忽略规则；未添加任何 backup 忽略规则。
+3. 修改的原因、目的、作用：避免 MATLAB ROS Toolbox 自动生成的消息转换和构建缓存进入版本控制，同时保留 Core 与 ROS 模型备份文件供提交。
+4. 备注：当前实际的 `matlab_msg_gen/` 位于本仓库上一级，本规则用于防止以后在本仓库内生成同名目录。
+
+### `memory.md`
+
+1. 修改什么文件：`memory.md`
+2. 修改了什么内容：记录本次 `.gitignore` 调整及 backup 保持可提交的约定。
+3. 修改的原因、目的、作用：保留生成文件管理规则的变更记录，方便后续提交与维护。
+
+## 2026-07-24 14:14：调整 ROS Build 的仓库内消息路径
+
+### `simulink/build/ros/build_stereo_ibvs_ros.m`
+
+1. 修改什么文件：`simulink/build/ros/build_stereo_ibvs_ros.m`
+2. 修改了什么内容：将自定义消息源目录和 `matlab_msg_gen` 生成目录改为新的 Git 仓库根目录；首次缺少生成目录时自动执行 `ros2genmsg(projectRoot)`；模型初始化回调同步从仓库根目录加载生成消息。
+3. 修改的原因、目的、作用：适配主 Python 包与 `velocity_servo_tag_interfaces` 接口包在同一仓库中平级存放的新目录结构，避免继续依赖仓库上一级路径。
+4. 备注：按要求仅修改，未执行 MATLAB 构建或其他验证。
+
+### `memory.md`
+
+1. 修改什么文件：`memory.md`
+2. 修改了什么内容：记录本次 ROS Build 路径调整。
+3. 修改的原因、目的、作用：保留目录重构后的构建入口变更记录。
+
+## 2026-07-24 15:03：Python视觉端切换到真实新帧自定义消息
+
+### `velocity_servo_tag/velocity_servo_tag/vision/vision_double_node.py`
+
+1. 修改什么文件：`velocity_servo_tag/velocity_servo_tag/vision/vision_double_node.py`
+2. 修改了什么内容：改为发布 `StereoFeatures`；左右相机分别维护 `uint32` 帧序号和近似采集时间；真实新帧无Tag时发布 `valid=false`；断流时不增加序号；只有左右序号变化才发布；删除旧8维数组和Zoom占位发布。
+3. 修改的原因、目的、作用：禁止固定频率重复快照被Simulink当作新测量，并支持左相机独立更新及新双目帧对触发EKF。
+4. 备注：采集时间使用成功取出图像时的系统时间；焦距由独立节点发布到 `/stereo/focal_length`。
+
+### `velocity_servo_tag/velocity_servo_tag/vision/stereo_features.py`
+
+1. 修改什么文件：`velocity_servo_tag/velocity_servo_tag/vision/stereo_features.py`
+2. 修改了什么内容：`CameraFeature` 增加帧序号和纳秒采集时间；新增uint32序号回绕及ROS Time字段拆分函数；删除旧8维快照新鲜度、双目裁剪和Zoom占位算法。
+3. 修改的原因、目的、作用：为自定义消息提供无ROS依赖的帧状态与时间转换工具，将双目配对和超时判断统一交给Simulink ROS层。
+
+### `velocity_servo_tag/config/velocity_servo_tag.yaml`
+
+1. 修改什么文件：`velocity_servo_tag/config/velocity_servo_tag.yaml`
+2. 修改了什么内容：视觉Topic参数改为 `/vision_double/stereo_features`；删除Python端特征超时、双目时间差和Zoom占位参数；注明焦距由独立节点发布。
+3. 修改的原因、目的、作用：使Python运行参数与新的自定义消息链路和Simulink职责一致。
+4. 备注：YAML解析通过。
+
+### `velocity_servo_tag/launch/vision_double.launch.py`
+
+1. 修改什么文件：`velocity_servo_tag/launch/vision_double.launch.py`
+2. 修改了什么内容：输出说明改为 `StereoFeatures`，并注明本Launch不发布Zoom占位消息。
+3. 修改的原因、目的、作用：避免启动说明继续引用已删除的旧Topic。
+
+### `velocity_servo_tag/launch/velocity_servo_tag.launch.py`
+
+1. 修改什么文件：`velocity_servo_tag/launch/velocity_servo_tag.launch.py`
+2. 修改了什么内容：输出说明改为 `StereoFeatures`，并明确焦距反馈节点不由该Launch启动。
+3. 修改的原因、目的、作用：使上层视觉启动入口与当前ROS接口一致。
+
+### `velocity_servo_tag/test/test_stereo_features.py`
+
+1. 修改什么文件：`velocity_servo_tag/test/test_stereo_features.py`
+2. 修改了什么内容：删除旧8维快照和Zoom占位测试，新增uint32序号递增、回绕、越界及纳秒时间戳拆分测试。
+3. 修改的原因、目的、作用：覆盖新视觉消息使用的纯算法边界。
+4. 备注：共7项单元测试通过。
+
+### `memory.md`
+
+1. 修改什么文件：`memory.md`
+2. 修改了什么内容：记录Python真实新帧发布、旧Zoom接口清理和验证结果。
+3. 修改的原因、目的、作用：为后续Ubuntu ROS 2联调和焦距反馈接入保留依据。
+4. 备注：修改的Python文件语法检查通过，`git diff --check`通过；未连接真实相机或ROS 2运行时。
+
+## 2026-07-24 16:10：更新双目 V2 ROS 架构说明
+
+### `README.md`
+
+1. 修改什么文件：`README.md`
+2. 修改了什么内容：保留原有章节、表格和 Mermaid 风格，更新双包仓库结构、自定义 `StereoFeatures`、真实新帧语义、JointState 重排与实测速度反馈、V2 Core/ROS 数据流、焦距接口、13维状态、分层速度和加速度整形、部署构建方法、安全机制及测试顺序。
+3. 修改的原因、目的、作用：使使用文档与当前 Core、ROS 包装层、Python 节点和接口包保持一致，删除已经失效的 Stage 1、旧视觉数组和 Zoom 占位接口说明。
+4. 备注：明确记录 YAML 双目节点 `640×480` 与 Simulink 当前 `1920×1080` 的待统一事项，以及焦距反馈节点当前由外部提供。
+
+### `velocity_servo_tag/launch/fr3_hardware.launch.py`
+
+1. 修改什么文件：`velocity_servo_tag/launch/fr3_hardware.launch.py`
+2. 修改了什么内容：将 `max_velocity_scale` Launch 默认值从 `0.10` 同步为 YAML 当前使用的 `0.50`。
+3. 修改的原因、目的、作用：避免 Launch 默认参数覆盖 YAML 后造成文档、配置和实际运行值不一致。
+4. 备注：Python 语法检查通过。
+
+### `velocity_servo_tag/launch/full_system.launch.py`
+
+1. 修改什么文件：`velocity_servo_tag/launch/full_system.launch.py`
+2. 修改了什么内容：将统一入口的 `max_velocity_scale` 默认值从 `0.10` 同步为 `0.50`。
+3. 修改的原因、目的、作用：保证统一入口向硬件 Launch 传递的默认最终速度比例与项目当前配置一致。
+4. 备注：Python 语法检查通过。
+
+### `memory.md`
+
+1. 修改什么文件：`memory.md`
+2. 修改了什么内容：记录本次 README 和两处 Launch 默认参数同步。
+3. 修改的原因、目的、作用：保留项目文档与运行默认值变更的可追踪记录。
+4. 备注：`git diff --check` 通过，未运行 Simulink 构建或真实 ROS 2/相机/FR3 联调。
+
+## 2026-07-24 17:35：精简部署配置功能开关
+
+### `simulink/config/stereo_ibvs_config.m`
+
+1. 修改什么文件：`simulink/config/stereo_ibvs_config.m`
+2. 修改了什么内容：日常功能开关精简为 `armControlEnable`、`depthTaskEnable`、`zoomControlEnable` 和 `nullspaceEnable`；保留并详细说明五项标定状态；删除中心任务、左相机许可、鲁棒项、Zoom 调度、右相机预测、默认使能和 EKF 策略等重复或固定逻辑开关及其 `cfg` 字段。
+3. 修改的原因、目的、作用：减少相互依赖和含义重复的开关，使日常配置只表达 Arm、Depth、Zoom 和 Nullspace 四项功能选择，同时继续在文件开头直观显示标定完成状态。
+4. 备注：MATLAB R2025b 配置加载通过；字段断言确认四个功能开关和五个标定状态存在、九个旧开关不存在，未标定状态下 `fullDeploymentReady=0`。Core Build 尚未同步，本次未生成或修改 SLX。
+
+### `memory.md`
+
+1. 修改什么文件：`memory.md`
+2. 修改了什么内容：记录本次配置开关精简范围、设计规则和验证结果。
+3. 修改的原因、目的、作用：明确 Config 已完成而 Core Build 尚待同步，避免后续工作误判当前过渡状态。
+
+## 2026-07-24 17:39：同步精简后的 Core 完整构建
+
+### `simulink/build/core/build_stereo_ibvs_core.m`
+
+1. 修改什么文件：`simulink/build/core/build_stereo_ibvs_core.m`
+2. 修改了什么内容：中心任务固定启用；EKF 固定只使用真实新双目测量；Arm 和 Zoom 鲁棒补偿固定进入计算并由对应 `beta` 数值决定是否产生补偿；左相机有效即可执行中心任务；Zoom 优先级调度直接跟随 `zoomControlEnable`。
+3. 修改的原因、目的、作用：消除对九个已删除 `cfg` 开关字段的依赖，同时采用固定逻辑保持现有模型端口和 MATLAB Function 签名不变，降低本次修改范围。
+4. 备注：完整 Build、Update Diagram 和七项关键 Constant 结构断言通过；MATLAB `checkcode` 仅提示脚本原有的 `datestr`、`now` 建议及一个未使用变量。
+
+### `simulink/core/stereo_ibvs_core.slx`
+
+1. 修改什么文件：`simulink/core/stereo_ibvs_core.slx`
+2. 修改了什么内容：使用更新后的完整 Build 重新生成 Core；顶层继续保持 `10` 个输入和 `3` 个输出。
+3. 修改的原因、目的、作用：使生成模型与精简后的 Config 和完整 Build 保持一致。
+4. 备注：模型内未检出九个旧 `cfg` 字段；构建自动生成备份 `simulink/core/backup/stereo_ibvs_core_backup_20260724_173834.slx`。
+
+### `memory.md`
+
+1. 修改什么文件：`memory.md`
+2. 修改了什么内容：记录完整 Core Build、生成模型、固定逻辑和验证结果。
+3. 修改的原因、目的、作用：完成 Config 精简后的 Core 同步记录，明确本次没有维护已删除的模块化 Build 文件。

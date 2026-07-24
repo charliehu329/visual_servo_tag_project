@@ -26,7 +26,7 @@ velocity_command_node.py
     1. 检查命令长度是否为7。
     2. 拒绝包含 NaN 或 Inf 的命令。
     3. 按 FR3 关节速度上限同比例缩放。
-    4. 限制相邻控制周期的关节速度变化量。
+    4. 对七维速度增量整组同比例缩放，限制相邻周期的加速度。
     5. 外部命令超时后平滑减速至零。
     6. 节点退出前平滑减速至零。
 """
@@ -64,7 +64,7 @@ class VelocityCommandNode(Node):
 
         self.declare_parameter(
             "max_joint_accelerations",
-            [0.20] * NUM_JOINTS,
+            [0.40] * NUM_JOINTS,
         )
 
         self.declare_parameter(
@@ -389,7 +389,7 @@ class VelocityCommandNode(Node):
         target_q_dot,
         dt,
     ):
-        """限制每个关节相邻控制周期的速度变化量。"""
+        """同比例缩放七维速度增量，限制相邻控制周期的加速度。"""
 
         target_q_dot = self.limit_joint_velocity(
             target_q_dot
@@ -405,11 +405,17 @@ class VelocityCommandNode(Node):
             self.commanded_q_dot
         )
 
-        delta = np.clip(
-            delta,
-            -max_delta,
-            max_delta,
+        acceleration_ratios = (
+            np.abs(delta) /
+            max_delta
         )
+
+        acceleration_scale = max(
+            1.0,
+            float(np.max(acceleration_ratios)),
+        )
+
+        delta = delta / acceleration_scale
 
         new_command = (
             self.commanded_q_dot +

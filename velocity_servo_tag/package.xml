@@ -53,6 +53,10 @@
     sensor_msgs
   </depend>
 
+  <depend>
+    velocity_servo_tag_interfaces
+  </depend>
+
   <!-- ===================================================== -->
   <!-- ROS 2 launch dependencies -->
   <!-- ===================================================== -->
