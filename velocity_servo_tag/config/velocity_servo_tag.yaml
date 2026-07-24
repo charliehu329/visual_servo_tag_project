@@ -7,20 +7,22 @@ vision_double_node:
   ros__parameters:
     # 左右USB相机编号，部署前根据/dev/video*实际映射修改。
     left_camera_index: 2
-    right_camera_index: 1
+    right_camera_index: 0
 
     camera_width: 1920
     camera_height: 1080
     camera_fps: 60.0
 
-    # 检查左右相机新帧序号并刷新预览窗口的频率。
-    publish_rate_hz: 60.0
+    # 检查左右相机新帧序号并刷新预览窗口的频率
+    # 因为现在是左右相机任意一帧更新就会发布，我们把发布定时器发送频率提高可以让simulink尽快接收最新信息
+    # 且simulink会自己去进行sequence配对，来匹配哪两帧是同一时刻的。
+    publish_rate_hz: 120.0
 
     tag_family: "tag36h11"
     target_tag_id: 0
 
     # 左右相机各自创建一个检测器。
-    detector_threads_per_camera: 2
+    detector_threads_per_camera: 6
     quad_decimate: 1.0
     quad_sigma: 0.0
     refine_edges: true
@@ -36,7 +38,7 @@ vision_double_node:
     stereo_features_topic: "/vision_double/stereo_features"
 
     # 是否显示左右相机OpenCV预览窗口。
-    show_window: true
+    show_window: false
 
 
 apriltag_detector:
