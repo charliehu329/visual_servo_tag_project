@@ -322,6 +322,19 @@ run(fullfile(projectRoot, 'simulink', 'build', 'ros', ...
 
 脚本会加载配置和 Core、检查或生成自定义消息支持，并重建 `stereo_ibvs_ros.slx`。构建完成后执行 Update Diagram，再运行模型。当前标定许可默认为 `false`，因此关节速度保持为零属于正常安全行为。
 
+在终端执行，可以生成每个板块耗时记录，用来判断是否超时
+
+```
+outP = sim("stereo_ibvs_ros", ...
+    "StopTime","30", ...
+    "Profile","on");
+
+outP.SimulationMetadata.TimingInfo
+
+p = outP.SimulationMetadata.TimingInfo.ProfilerData;
+generateReport(p,"stereo_ibvs_profile.html");
+```
+
 #### 每次启动
 
 模型已经构建后，每个新的 MATLAB 会话只需加载 ROS 2 环境并打开模型：
