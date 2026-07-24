@@ -180,6 +180,17 @@ colcon build --symlink-install --packages-up-to velocity_servo_tag
 source install/setup.bash
 ```
 
+查看相机ID
+```
+v4l2-ctl --list-devices
+```
+
+查看相机支持的分辨率
+```
+v4l2-ctl -d /dev/video0 --get-fmt-video
+v4l2-ctl -d /dev/video0 --get-parm
+```
+
 ### 4.2 Launch 启动命令
 
 以下命令按需要选择，不需要全部同时运行。
