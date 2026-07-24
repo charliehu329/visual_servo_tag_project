@@ -817,3 +817,17 @@ memory.md
 1. 修改什么文件：`memory.md`
 2. 修改了什么内容：记录完整 Core Build、生成模型、固定逻辑和验证结果。
 3. 修改的原因、目的、作用：完成 Config 精简后的 Core 同步记录，明确本次没有维护已删除的模块化 Build 文件。
+## 2026-07-24 22:38：新增 V2.1 离线闭环仿真 Build
+
+### `simulink/build/sim/build_stereo_ibvs_sim_v2_1.m`
+
+1. 修改什么文件：`simulink/build/sim/build_stereo_ibvs_sim_v2_1.m`
+2. 修改了什么内容：新增 V2.1 仿真模型生成器；使用 `cfg.q0` 初始化虚拟 FR3，以 Core 关节速度进行离散积分，通过 FR3 正运动学和双目针孔投影生成 8 维视觉特征，并记录关节角、速度、中心像素误差、目标深度、视觉有效性和控制状态。
+3. 修改的原因、目的、作用：建立不依赖 ROS 2、相机和真机的中心视觉任务闭环，用于后续快速判断 Core 是否能够驱动图像中心误差收敛。
+4. 备注：仿真中临时启用 Arm 标定许可，并关闭 Depth、Zoom 和 Nullspace，不修改部署 Config 或 Core；本次按要求只新增 Build，未运行 Build、未生成 `.slx`；MATLAB R2025b `checkcode` 通过。
+
+### `Memory.md`
+
+1. 修改什么文件：`Memory.md`
+2. 修改了什么内容：记录 V2.1 离线闭环仿真 Build 的结构、目的和验证边界。
+3. 修改的原因、目的、作用：保证新仿真生成器及“本次未生成模型”的状态可追踪。
