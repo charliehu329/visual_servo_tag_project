@@ -8,10 +8,10 @@ T_end = inf;
 
 
 % Fixed-focus pinhole camera calibration (placeholder values).
-fx = 800;
-fy = 800;
-cx = 1920;
-cy = 1080;
+fx = 2057;
+fy = 2054;
+cx = 1000;
+cy = 592;
 
 % Fixed working-plane depth.
 Z_hat = 0.75;
