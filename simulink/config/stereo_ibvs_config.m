@@ -65,7 +65,7 @@ zoomControlEnable = false;
 % 最终许可关系在第 15 节统一计算。
 
 % 左相机相对fr3_link8的手眼变换已经标定并写入cfg.T_link8_CL。
-cameraMountCalibrated = false;
+cameraMountCalibrated = true;
 
 % 左右相机外参和baseline已经完成双目标定并写入配置。
 stereoCalibrationValid = false;
@@ -234,7 +234,13 @@ cfg.T_W_B = eye(4);
 
 % 左相机相对于 fr3_link8 的安装变换。
 % 当前为占位值，手眼标定后替换。
-cfg.T_link8_CL = eye(4);
+
+cfg.T_link8_CL = [ ...
+     0.685367986922,  0.727986036940,  0.017522914211, -0.0495; ...
+    -0.727707409066,  0.683826802626,  0.053130319028,  0.0191; ...
+     0.026695491993, -0.049165374297,  0.998433831897,  0.1396; ...
+     0,               0,               0,               1       ...
+];
 cfg.T_CL2L8 = cfg.T_link8_CL;
 cfg.cameraMountCalibrated = cameraMountCalibrated;
 cfg.cameraMountIsPlaceholder = ~cfg.cameraMountCalibrated;
@@ -273,8 +279,8 @@ cfg.cyR = cfg.imageHeightPx / 2;
 
 % 等效输出像元尺寸，单位 mm/pixel。
 % 当前 2.90e-3 为占位值，确认实际值后替换并设为 true。
-cfg.outputPixelPitchXmm = 2.90e-3;
-cfg.outputPixelPitchYmm = 2.90e-3;
+cfg.outputPixelPitchXmm = 0.00252795;  % mm/pixel
+cfg.outputPixelPitchYmm = 0.00253165;  % mm/pixel
 cfg.pixelPitchCalibrated = pixelPitchCalibrated;
 
 % 主点、畸变和成像模型是否已正式标定。
