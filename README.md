@@ -334,17 +334,38 @@ Unrecognized message type velocity_servo_tag_interfaces/StereoFeatures. Use ros2
 ros2 msg list
 ```
 
-如果没有，需要再在matlab里生成自定义信息
+下次正常启动
+
+只要 .msg 定义没有修改，通常不用再次执行 ros2genmsg。从终端启动 MATLAB：
 ```
-cd('/home/harry/franka_ros2_ws/src')
-ros2genmsg('/home/harry/franka_ros2_ws/src')
+source /opt/ros/jazzy/setup.bash
+source ~/franka_ros2_ws/install/setup.bash
+/home/harry/ProgramFiles/MATLAB/R2025b/bin/matlab
 ```
 
-然后添加路径
+进入后直接验证：
 ```
-addpath('/home/harry/franka_ros2_ws/src/matlab_msg_gen/glnxa64/install/m')
-savepath
+ros2message("velocity_servo_tag_interfaces/StereoFeatures")
 ```
+如果下次重启后又找不到
+
+使用这套规范的注册方法：
+```
+srcDir = '/home/harry/matlab_custom_msgs_v2';
+regDir = '/home/harry/matlab_custom_msgs_register_v2';
+
+if ~isfolder(regDir)
+    mkdir(regDir);
+end
+
+copyfile( ...
+    fullfile(srcDir,'matlab_msg_gen.zip'), ...
+    fullfile(regDir,'matlab_msg_gen.zip'));
+
+ros2RegisterMessages(regDir);
+```
+
+然后重启 MATLAB。以后只有当 StereoFeatures.msg 字段发生变化或升级 MATLAB 版本时，才需要重新生成。
 
 
 在终端执行，可以生成每个板块耗时记录，用来判断是否超时
