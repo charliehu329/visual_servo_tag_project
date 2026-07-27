@@ -155,6 +155,8 @@ ROS Build 第一次运行时会调用 `ros2genmsg(projectRoot)`，并将生成�
 
 ```bash
 cd ~/franka_ros2_ws
+source /opt/ros/jazzy/setup.bash
+source ~/franka_ros2_ws/install/setup.bash
 ```
 
 加载 ROS 2 环境：
@@ -177,7 +179,7 @@ colcon build --symlink-install --packages-up-to velocity_servo_tag
 加载当前工作区：
 
 ```bash
-source install/setup.bash
+source ~/franka_ros2_ws/install/setup.bash
 ```
 
 查看相机ID
@@ -307,7 +309,7 @@ MATLAB/Simulink 不会被任何 Launch 自动启动。建议从已经加载 ROS 
 ```bash
 cd ~/franka_ros2_ws
 source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+source ~/franka_ros2_ws/install/setup.bash
 matlab
 ```
 
