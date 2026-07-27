@@ -24,7 +24,7 @@
 % 1 = 允许Core生成机械臂关节速度；0 = 机械臂速度最终归零。
 % 真正输出还要求 controllerEnableSafe、左目标、相机模型、运动学和
 % Arm标定许可同时有效。本开关不能绕过09安全模块。
-armControlEnable = true;
+armControlEnable = false;
 
 % 双目逆深度任务开关：
 % 1 = 在中心主任务之后加入逆深度次任务；
@@ -38,7 +38,7 @@ depthTaskEnable = false;
 % 0 = 不执行关节中位姿态优化。
 % 开启后由cfg.kNull决定回中强度；cfg.kNull必须大于0。
 % 当前cfg.kNull=0.05，因此本开关为1时零空间任务会实际生效。
-nullspaceEnable = true;
+nullspaceEnable = false;
 
 % Zoom控制总开关：
 % 1 = 允许生成左右镜头焦距速度命令；0 = Zoom命令最终归零。
@@ -352,7 +352,7 @@ cfg.visibilityZMin = 0.10;
 
 cfg.targetDepthMin = 0.50;
 cfg.targetDepthMax = 1.00;
-cfg.Zd = 0.75;
+cfg.Zd = 0.60;
 cfg.rhoD = 1 / cfg.Zd;
 
 cfg.rhoEstimateMin = 0.80;
