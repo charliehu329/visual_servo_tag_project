@@ -324,6 +324,29 @@ run(fullfile(projectRoot, 'simulink', 'build', 'ros', ...
 
 脚本会加载配置和 Core、检查或生成自定义消息支持，并重建 `stereo_ibvs_ros.slx`。构建完成后执行 Update Diagram，再运行模型。当前标定许可默认为 `false`，因此关节速度保持为零属于正常安全行为。
 
+如果报错，
+```
+Unrecognized message type velocity_servo_tag_interfaces/StereoFeatures. Use ros2 msg list to see available types.
+```
+
+可以先用，看列表里是否有velocity_servo_tag_interfaces/StereoFeatures
+```
+ros2 msg list
+```
+
+如果没有，需要再在matlab里生成自定义信息
+```
+cd('/home/harry/franka_ros2_ws/src')
+ros2genmsg('/home/harry/franka_ros2_ws/src')
+```
+
+然后添加路径
+```
+addpath('/home/harry/franka_ros2_ws/src/matlab_msg_gen/glnxa64/install/m')
+savepath
+```
+
+
 在终端执行，可以生成每个板块耗时记录，用来判断是否超时
 
 ```
