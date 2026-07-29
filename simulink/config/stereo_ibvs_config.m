@@ -48,8 +48,8 @@ zoomControlEnable = false;
 
 %% 0.1 标定状态与安全许可
 % 本节集中显示当前项目还缺少哪些标定或接口验证，方便启动前检查。
-% 这些变量不是日常功能开关，而是“对应数据已经真实测量、写入配置，
-% 并完成方向、单位和安全验证”的声明。
+% 这些变量不是日常功能开关，而是"对应数据已经真实测量、写入配置，
+% 并完成方向、单位和安全验证"的声明。
 %
 % 必须先完成对应工作，再把变量改为 true。不能仅为了得到非零速度
 % 而打开，否则配置中的占位参数可能直接用于真机控制。
@@ -79,7 +79,9 @@ cameraIntrinsicsCalibrated = false;
 % Zoom底层接口已经验证mm/s单位、正负方向、限速和可靠停止。
 focalRateCommandInterfaceValidated = false;
 
-%% 1. 路径与配置版本
+%% 1. 路径、配置结构体与版本
+% 本节只负责定位工程目录并创建唯一的配置结构体cfg。
+% 后续Simulink Constant块统一读取cfg.xxx，不生成cfg_xxx散变量。
 projectDir = fileparts(fileparts(mfilename('fullpath')));
 repoDir = fileparts(projectDir);
 
@@ -88,18 +90,147 @@ cfg.configurationName = 'v2_full_deployment_mm_interface';
 cfg.configurationVersion = 3;
 cfg.stage = 5;
 
-%% 2. 采样频率
-% V2 Core 按 60 Hz 运行。
+%% 2. 常用调参区
+% =========================================================================
+% 日常调试时，优先只看本节。
+%
+% 推荐调参顺序：
+% 1. 先确认第0节功能开关和第0.1节标定许可；
+% 2. 再确认控制周期、期望深度和期望尺度；
+% 3. 先调中心任务Kc，再调深度任务kRho；
+% 4. 使用Zoom时，再调Kf和优先级调度阈值；
+% 5. 最后根据真机响应逐步放宽速度和加速度限制。
+%
+% 除非正在排查特定底层问题，否则不建议修改第3节之后的参数。
+% =========================================================================
+
+%% 2.1 控制周期
+% Core控制频率。修改后cfg.Ts、ROS超时帧数等派生量会自动更新。
+% 一般应与视觉数据的稳定更新频率一致；当前按60 Hz运行。
 cfg.cameraFps = 60;
 cfg.visionRateHz = cfg.cameraFps;
 cfg.controlRateHz = 60;
 cfg.Ts = 1 / cfg.controlRateHz;
 
-% Simulink 以 Core 周期发布，Python 安全转发层可按 120 Hz 保持并转发。
+% Simulink按Core周期发布，Python安全层以120 Hz保持并转发最新命令。
+% pythonSafetyRateHz通常不作为控制器调参项，仅需与转发节点配置一致。
 cfg.simulinkPublishRateHz = cfg.controlRateHz;
 cfg.pythonSafetyRateHz = 120;
 
-%% 3. ROS 2 接口
+%% 2.2 视觉任务目标
+% 归一化图像中心期望值[xd; yd]。
+% [0;0]表示将目标中心移动到相机主点。
+cfg.centerDesired = [0; 0];
+
+% 目标工作深度，单位m；rhoD是由Zd自动计算的期望逆深度，单位1/m。
+% targetDepthMin/Max是允许的目标深度范围，不是期望值。
+cfg.targetDepthMin = 0.50;
+cfg.targetDepthMax = 1.00;
+cfg.Zd = 0.60;
+cfg.rhoD = 1 / cfg.Zd;
+
+% AprilTag尺度定义为"四角面积的平方根"，单位pixel。
+% scaleDesired = [leftDesired; rightDesired]。
+% 当前值是临时期望值，应根据实际工作距离和成像效果确定。
+cfg.targetCharacteristicSize = 0.10;
+cfg.scaleDesired = [700; 700];
+
+%% 2.3 Arm中心任务、Depth任务与零空间任务
+% Kc：左相机二维中心误差比例增益。
+% 增大后回中更快，但过大会引起抖动、超调或频繁触发限速。
+cfg.Kc = diag([2.5, 2.5]);
+
+% kRho：双目逆深度次任务增益。
+% 仅在depthTaskEnable=true且双目数据与标定许可有效时生效。
+cfg.kRho = 1.5;
+
+% lambdaC/lambdaRho：阻尼伪逆系数。
+% 增大可提高接近奇异位置时的稳定性，但会降低任务跟踪能力。
+cfg.lambdaC = 0.02;
+cfg.lambdaRho = 0.02;
+
+% betaC/betaRho：鲁棒补偿强度；设为0表示关闭对应补偿。
+% epsilonC/epsilonRho：鲁棒项平滑参数，避免误差接近0时不连续。
+cfg.betaC = 0;
+cfg.betaRho = 0;
+cfg.epsilonC = 1e-3;
+cfg.epsilonRho = 1e-3;
+
+% kNull：关节中位零空间回中强度。
+% 仅在nullspaceEnable=true时生效；应明显小于主视觉任务增益。
+cfg.kNull = 0.05;
+
+% 将第0节的日常开关写入cfg，供Core统一读取。
+cfg.armControlEnable = armControlEnable;
+cfg.depthTaskEnable = depthTaskEnable;
+cfg.nullspaceEnable = nullspaceEnable;
+
+%% 2.4 Zoom控制器
+% Kf：左右镜头尺度误差控制增益。
+% 增大后变焦响应更快，但可能造成尺度振荡或频繁切换调度模式。
+cfg.Kf = diag([1.5, 1.5]);
+
+% betaF：Zoom鲁棒补偿强度；[0;0]表示左右镜头均关闭。
+% epsilonF：对应平滑参数。
+cfg.betaF = [0; 0];
+cfg.epsilonF = [1e-3; 1e-3];
+cfg.zoomControlEnable = zoomControlEnable;
+
+%% 2.5 Zoom优先级调度
+% 尺度误差进入阈值必须大于退出阈值，以形成迟滞并避免模式抖动。
+cfg.scaleErrorEnterThreshold = 0.04;
+cfg.scaleErrorExitThreshold = 0.015;
+
+% 尺度进入稳定区后需要保持的时间，单位s。
+cfg.scaleSettledHoldTime = 0.25;
+
+% 连续检测到扰动后才确认切换的时间，单位s。
+cfg.disturbanceConfirmTime = 0.10;
+
+% 仅执行Zoom任务的最长持续时间，单位s。
+cfg.zoomOnlyMaxTime = 1.00;
+
+% Arm深度任务从0平滑恢复到完整权重所需时间，单位s。
+cfg.armDepthRampTime = 0.50;
+
+% 接近焦距工作边界时预留的比例，避免命令长期顶在限位上。
+cfg.zoomLimitMarginFraction = 0.02;
+
+%% 2.6 焦距工作范围与Zoom速度
+% 硬件极限：镜头理论允许范围，不能由控制器突破，单位mm。
+cfg.focalLengthHardwareMinMm = [5; 5];
+cfg.focalLengthHardwareMaxMm = [99; 99];
+
+% 控制器工作范围：应严格位于硬件极限内部，单位mm。
+% 日常实验优先修改工作范围，不建议修改硬件极限。
+cfg.focalLengthWorkingMinMm = [10; 10];
+cfg.focalLengthWorkingMaxMm = [90; 90];
+
+% 已验证可持续达到的速度与绝对速度上限，单位mm/s。
+cfg.focalRateGuaranteedMmPerSec = 15.5;
+cfg.focalRateAbsoluteMaxMmPerSec = 18.75;
+cfg.focalRateUnit = 'mm/s';
+
+% 设计速度利用系数。实际设计速度=etaZoom×保证速度。
+% 初次真机测试应从更小值开始逐步增加。
+cfg.etaZoom = 0.60;
+cfg.focalRateDesignMmPerSec = ...
+    cfg.etaZoom * cfg.focalRateGuaranteedMmPerSec;
+cfg.rightReacquireZoomRateMmPerSec = ...
+    cfg.focalRateDesignMmPerSec;
+
+%% 2.7 Arm算法层限速
+% qDotAlgorithmMax和qDDotAlgorithmMax的实际cfg赋值位于FR3 URDF读取后，
+% 因为还需要与URDF硬件上限比较。日常调节的是下面两个标量。
+%
+% 关节速度上限，单位rad/s。09安全模块会对七维命令整组同比例缩放。
+qDotAlgorithmLimitRadPerSec = 0.03;
+
+% 关节加速度上限，单位rad/s^2，用于限制相邻周期的速度变化。
+qDDotAlgorithmLimitRadPerSec2 = 0.20;
+
+%% 3. ROS 2接口与Topic
+% 本节是通信接口配置。只有Topic、消息类型或ROS节点接口变化时才修改。
 cfg.jointStateTopic = '/franka/joint_states';
 cfg.jointStateMessageType = 'sensor_msgs/JointState';
 cfg.expectedJointNames = {
@@ -230,6 +361,7 @@ end
 
 %% 5. 世界、左相机与右相机安装关系
 % T_A_B 表示 B 坐标系相对于 A 坐标系的位姿。
+% 是机器人基座坐标系 {B} 到世界坐标系 {W} 的齐次变换：
 cfg.T_W_B = eye(4);
 
 % 左相机相对于 fr3_link8 的安装变换。
@@ -300,13 +432,9 @@ cfg.cameraIntrinsicsArePlaceholder = ...
 % 不设置虚假的 focalLength0Mm、fx0Px、fy0Px。
 % 第一帧真实焦距到来前，相机模型保持无效。
 
-%% 7. 焦距范围与焦距速度限制
-cfg.focalLengthHardwareMinMm = [5; 5];
-cfg.focalLengthHardwareMaxMm = [99; 99];
-
-cfg.focalLengthWorkingMinMm = [10; 10];
-cfg.focalLengthWorkingMaxMm = [90; 90];
-
+%% 7. 焦距范围校验与Zoom接口许可
+% 焦距范围与速度的常用设置已经集中到第2.6节。
+% 本节只校验范围关系，并生成Zoom底层接口相关的许可状态。
 if any(cfg.focalLengthHardwareMinMm >= ...
         cfg.focalLengthHardwareMaxMm) || ...
         any(cfg.focalLengthHardwareMinMm > ...
@@ -318,18 +446,6 @@ if any(cfg.focalLengthHardwareMinMm >= ...
     error('StereoIBVS:InvalidFocalLengthRanges', ...
         '焦距硬件范围和工作范围不一致。');
 end
-
-% V2 Zoom 执行器能力，全部使用 mm/s。
-cfg.focalRateGuaranteedMmPerSec = 15.5;
-cfg.focalRateAbsoluteMaxMmPerSec = 18.75;
-cfg.focalRateUnit = 'mm/s';
-
-cfg.etaZoom = 0.60;
-cfg.focalRateDesignMmPerSec = ...
-    cfg.etaZoom * cfg.focalRateGuaranteedMmPerSec;
-
-cfg.rightReacquireZoomRateMmPerSec = ...
-    cfg.focalRateDesignMmPerSec;
 
 % Python 底层是否已经验证：
 % 1. 接收 mm/s；
@@ -350,47 +466,25 @@ cfg.numericalEpsilon = 1e-8;
 cfg.visibilityEpsilon = 1e-6;
 cfg.visibilityZMin = 0.10;
 
-cfg.targetDepthMin = 0.50;
-cfg.targetDepthMax = 1.00;
-cfg.Zd = 0.60;
-cfg.rhoD = 1 / cfg.Zd;
-
+% EKF及控制允许使用的逆深度估计范围，单位1/m。
 cfg.rhoEstimateMin = 0.80;
 cfg.rhoEstimateMax = 2.20;
+
+% V2旧模块继续读取rhoMin/rhoMax；数值只由上面两个主参数派生。
 cfg.rhoMin = cfg.rhoEstimateMin;
 cfg.rhoMax = cfg.rhoEstimateMax;
+
+% 双目视差的数值下限，防止接近0时除零或产生极大深度。
 cfg.disparityMin = 1e-4;
 
+% 右相机可见性边界、迟滞宽度和重新捕获所需连续有效帧数。
 cfg.rightVisibilityMarginPx = 80;
 cfg.rightVisibilityHysteresisPx = 20;
 cfg.rightReacquireValidSamples = 5;
 
-% AprilTag 尺度：四角面积平方根。
-cfg.targetCharacteristicSize = 0.10;
-% 当前为临时期望值，真实实验确认后替换。
-cfg.scaleDesired = [700; 700];
-
-%% 9. 完整 Arm Priority Controller
-cfg.centerDesired = [0; 0];
-
-cfg.Kc = diag([2.5, 2.5]);
-cfg.kRho = 1.5;
-
-cfg.lambdaC = 0.02;
-cfg.lambdaRho = 0.02;
-
-cfg.betaC = 0;
-cfg.betaRho = 0;
-cfg.epsilonC = 1e-3;
-cfg.epsilonRho = 1e-3;
-
-% 鲁棒补偿不再设置独立开关；对应 beta 为 0 时补偿项自然为 0。
-cfg.nullspaceEnable = nullspaceEnable;
-cfg.kNull = 0.05;
-
-cfg.armControlEnable = armControlEnable;
-cfg.depthTaskEnable = depthTaskEnable;
-
+%% 9. 控制器内部状态初值
+% 常用控制增益和任务开关已经集中到第2.3节。
+% 以下两个初值只用于打断Core内部反馈环，正常调参时不修改。
 % 用于打断 Core 内反馈环的两个 Unit Delay 初值。
 cfg.qDotAppliedInitial = zeros(7,1);
 cfg.depthErrorInitial = 0;
@@ -444,27 +538,17 @@ cfg.ekfP0 = diag([
     0.50^2
 ]);
 
-%% 11. Zoom Controller
-cfg.Kf = diag([1.5, 1.5]);
-cfg.betaF = [0; 0];
-cfg.epsilonF = [1e-3; 1e-3];
-cfg.zoomControlEnable = zoomControlEnable;
-
-%% 12. Zoom Priority Supervisor
-% Zoom 开启时由 Core 自动启用优先级调度，不再设置第二个开关。
-cfg.scaleErrorEnterThreshold = 0.04;
-cfg.scaleErrorExitThreshold = 0.015;
-cfg.scaleSettledHoldTime = 0.25;
-cfg.disturbanceConfirmTime = 0.10;
-cfg.zoomOnlyMaxTime = 1.00;
-cfg.armDepthRampTime = 0.50;
-cfg.zoomLimitMarginFraction = 0.02;
-
+%% 11. 控制器诊断阈值
+% 第2.4节和第2.5节已经包含Zoom控制器及优先级调度的常用参数。
+% 以下阈值只用于日志和响应判定，通常不参与日常性能调参。
 cfg.depthErrorLoggingThreshold = 0.02;
 cfg.zoomResponseThreshold = 1e-3;
 cfg.armDepthResponseThreshold = 1e-4;
 
-%% 13. V2 Safety and Saturation
+%% 12. V2安全与饱和
+% qLimitSoftMargin：距离URDF关节硬限位的软保护余量。
+% cartesianLinearSpeedMax：相机笛卡尔线速度的最终保护上限，单位m/s。
+% 两者属于安全边界，除非完成风险评估，否则不要作为性能参数放宽。
 cfg.qLimitSoftMargin = 5*pi/180;
 cfg.cartesianLinearSpeedMax = 2.0;
 
@@ -473,12 +557,14 @@ cfg.cartesianLinearSpeedMax = 2.0;
 % cfg.qDotMax 从 URDF 读取并继续作为硬件能力边界。
 % Core 的 0.03 rad/s 是算法层低速上限，09 安全模块按七维整组同比例缩放。
 cfg.qDotAlgorithmMax = ...
-    min(cfg.qDotMax, 0.03 * ones(7,1));
+    min(cfg.qDotMax, ...
+        qDotAlgorithmLimitRadPerSec * ones(7,1));
 
 % Core 算法层关节加速度上限；七维速度增量按同一个比例缩小。
-cfg.qDDotAlgorithmMax = 0.20 * ones(7,1);
+cfg.qDDotAlgorithmMax = ...
+    qDDotAlgorithmLimitRadPerSec2 * ones(7,1);
 
-%% 14. ROS 2 输入监督与消息尺寸
+%% 13. ROS 2输入监督与消息尺寸
 cfg.jointStateTimeoutSec = 0.10;
 cfg.visionTimeoutSec = 0.10;
 cfg.visionTimeoutFrames = max(1,ceil(cfg.visionTimeoutSec/cfg.Ts));
@@ -535,7 +621,7 @@ cfg.visionFeatureOrder = {
     'scaleR'
 };
 
-%% 15. 标定许可与真机安全锁
+%% 14. 标定许可与真机安全锁
 cfg.cameraModelCalibrationReady = ...
     cfg.cameraIntrinsicsCalibrated && ...
     cfg.pixelPitchCalibrated;
@@ -566,7 +652,7 @@ cfg.stage1CalibrationReady = ...
 cfg.controllerCalibrationReady = ...
     cfg.fullDeploymentReady;
 
-%% 16. 写入 MATLAB 基础工作区
+%% 15. 写入MATLAB基础工作区
 % 整个项目统一只维护 cfg 结构体。
 % Simulink Constant 块使用 cfg.xxx，不再生成 cfg_xxx 独立变量。
 assignin('base', 'cfg', cfg);
@@ -595,7 +681,9 @@ clear projectDir repoDir fr3 cameraBody cameraJoint T_W_CL0 ...
     nullspaceEnable zoomControlEnable ...
     cameraMountCalibrated stereoCalibrationValid ...
     pixelPitchCalibrated cameraIntrinsicsCalibrated ...
-    focalRateCommandInterfaceValidated;
+    focalRateCommandInterfaceValidated ...
+    qDotAlgorithmLimitRadPerSec ...
+    qDDotAlgorithmLimitRadPerSec2;
 
 
 function fr3 = parseFr3UrdfForController(urdfFile)
