@@ -18,8 +18,8 @@ Z_hat = 0.75;
 rho_hat = 1/Z_hat;
 
 % Proportional + EKF feedforward + leaky adaptive residual controller.
-Kpx = 2.0;
-Kpy = 2.0;
+Kpx = 2.5;
+Kpy = 2.5;
 k_ff = 1.0;
 gamma_adapt = 0.30;
 sigma_adapt = 0.50;
@@ -27,7 +27,7 @@ adapt_max = 0.05;
 
 enable_proportional = true;
 enable_ekf_feedforward = false;
-enable_adaptation = false;
+enable_adaptation = true;
 controller_enable = true;
 USE_ROS = true;
 
@@ -41,6 +41,9 @@ Q_ekf = diag([1e-6, 1e-6, 1e-4, 1e-4, 1e-2, 1e-2]);
 R_ekf = diag([0.003^2, 0.003^2]);
 ekf_gate_threshold = 13.82;
 ekf_reset_timeout_sec = 0.50;
+% 允许连续漏检的视觉帧数。
+% 推荐先使用2帧。
+target_loss_hold_frames = 3;
 
 % Input watchdogs.
 target_timeout_sec = 0.20;
