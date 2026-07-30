@@ -41,7 +41,7 @@ Q_ekf = diag([1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4]);
 R_ekf = diag([1e-1, 1e-1]);
 ekf_gate_threshold = 5.991;
 ekf_reset_timeout_sec = 0.50;
-`
+
 
 % Input watchdogs.
 target_timeout_sec = 0.20;
@@ -67,3 +67,51 @@ controller_parameters = [ ...
 gamma_x = gamma_adapt;
 gamma_y = gamma_adapt;
 v_adapt_max = adapt_max;
+
+
+%% FR3相机速度反馈运动学模型
+
+urdf_path = fullfile( ...
+    fileparts(mfilename('fullpath')), ...
+    '..', ...
+    'config', ...
+    'urdf', ...
+    'fr3.urdf');
+
+fr3_camera_robot = importrobot(urdf_path);
+fr3_camera_robot.DataFormat = 'column';
+bodyNames = fr3_camera_robot.BodyNames;
+
+if ismember('fr3_leftfinger',bodyNames)
+    removeBody(fr3_camera_robot,'fr3_leftfinger');
+end
+
+if ismember('fr3_rightfinger',bodyNames)
+    removeBody(fr3_camera_robot,'fr3_rightfinger');
+end
+% T_link8_camera：
+% 从相机坐标系到fr3_link8坐标系的齐次变换。
+T_link8_camera = [ ...
+     0.685367986922,  0.727986036940,  0.017522914211, -0.0495; ...
+    -0.727707409066,  0.683826802626,  0.053130319028,  0.0191; ...
+     0.026695491993, -0.049165374297,  0.998433831897,  0.1396; ...
+     0.0,             0.0,             0.0,             1.0];
+
+camera_body = rigidBody('camera_link');
+
+camera_joint = rigidBodyJoint( ...
+    'camera_fixed_joint', ...
+    'fixed');
+
+setFixedTransform( ...
+    camera_joint, ...
+    T_link8_camera);
+
+camera_body.Joint = camera_joint;
+
+addBody( ...
+    fr3_camera_robot, ...
+    camera_body, ...
+    'fr3_link8');
+
+camera_velocity_feedback_timeout_sec = 0.5;
