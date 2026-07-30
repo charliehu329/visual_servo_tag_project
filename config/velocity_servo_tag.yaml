@@ -65,13 +65,13 @@ velocity_mapper_node:
 
     # mapper层关节速度限制，单位rad/s。
     max_joint_velocities:
-      - 0.2
-      - 0.2
-      - 0.2
-      - 0.2
-      - 0.2
-      - 0.2
-      - 0.2
+      - 0.25
+      - 0.25
+      - 0.25
+      - 0.25
+      - 0.25
+      - 0.25
+      - 0.25
 
     # mapper层关节加速度限制，单位rad/s²。
     max_joint_accelerations:
