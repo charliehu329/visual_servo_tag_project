@@ -18,16 +18,16 @@ Z_hat = 0.75;
 rho_hat = 1/Z_hat;
 
 % Proportional + EKF feedforward + leaky adaptive residual controller.
-Kpx = 4.0;
-Kpy = 4.0;
+Kpx = 2.0;
+Kpy = 2.0;
 k_ff = 1.0;
 gamma_adapt = 0.30;
 sigma_adapt = 0.50;
 adapt_max = 0.05;
 
 enable_proportional = true;
-enable_ekf_feedforward = true;
-enable_adaptation = true;
+enable_ekf_feedforward = false;
+enable_adaptation = false;
 controller_enable = true;
 USE_ROS = true;
 
