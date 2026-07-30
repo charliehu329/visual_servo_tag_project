@@ -4,3 +4,19 @@ build/
 install/
 log/
 .pytest_cache/
+# ================= Simulink 缓存文件 =================
+# Simulink 编译缓存
+*.slxc
+# 自动保存文件
+*.autosave
+# slprj 整个缓存目录（最重要！你截图里大量文件都在这里）
+slprj/
+
+# ================= 仿真输出/日志数据（按需选择） =================
+# ⚠️注意：如果你部分.mat需要保留，不要直接写 *.mat，改用目录屏蔽
+# 屏蔽 test_results 下所有仿真结果文件（你的实验日志、fig、png、yaml）
+simulink/test_results/**/*.mat
+
+# ================= MATLAB 临时文件 =================
+*.asv
+*.m~
