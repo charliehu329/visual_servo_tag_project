@@ -96,7 +96,7 @@ velocity_command_node:
     publish_rate_hz: 120.0
 
     # 相对于FR3官方关节速度上限的最终保护比例。
-    max_velocity_scale: 0.80
+    max_velocity_scale: 0.50
 
     # 底层命令桥接层的加速度限制，单位rad/s²。
     max_joint_accelerations:

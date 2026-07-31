@@ -14,7 +14,7 @@ cx = 1000;
 cy = 592;
 
 % Fixed working-plane depth.
-Z_hat = 0.5;
+Z_hat = 1;
 rho_hat = 1/Z_hat;
 
 % Proportional + EKF feedforward + leaky adaptive residual controller.
@@ -26,14 +26,14 @@ sigma_adapt = 0.0;
 adapt_max = 0.0;
 
 enable_proportional = true;
-enable_ekf_feedforward = true;
-enable_adaptation = true;
+enable_ekf_feedforward = false;
+enable_adaptation = false;
 controller_enable = true;
 USE_ROS = true;
 
 % Camera-frame XY command limits.
-v_xy_max = 0.70;
-a_xy_max = 0.80;
+v_xy_max = 2.0;
+a_xy_max = 2.0;
 
 % EKF state order: [X;Y;Vx;Vy;Ax;Ay] in a local fixed XY frame.
 P0 = diag([0.05^2, 0.05^2, 0.20^2, 0.20^2, 0.50^2, 0.50^2]);
