@@ -27,7 +27,6 @@ adapt_max = 0.0;
 
 enable_proportional = true;
 enable_ekf_feedforward = true;
-enable_adaptation = false;
 controller_enable = true;
 USE_ROS = true;
 
@@ -57,10 +56,15 @@ random_seed_y = 9053;
 
 % Fixed-size vector consumed by the embedded MATLAB Function controller.
 controller_parameters = [ ...
-    Ts; Z_hat; Kpx; Kpy; k_ff; gamma_adapt; sigma_adapt; adapt_max; ...
-    v_xy_max; a_xy_max; ekf_gate_threshold; ...
-    double(enable_proportional); double(enable_ekf_feedforward); ...
-    double(enable_adaptation); double(controller_enable); ...
+    Ts;
+    Z_hat;
+    Kpx;
+    Kpy;
+    k_ff;
+    ekf_gate_threshold;
+    double(enable_proportional);
+    double(enable_ekf_feedforward);
+    double(controller_enable);
     ekf_reset_timeout_sec];
 
 % Compatibility aliases used only by the existing plotting script.

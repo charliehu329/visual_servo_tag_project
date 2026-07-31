@@ -60,7 +60,7 @@ class VelocityCommandNode(Node):
 
         self.declare_parameter("mode", "zero")
         self.declare_parameter("publish_rate_hz", 120.0)
-        self.declare_parameter("max_velocity_scale", 0.1)
+        self.declare_parameter("max_velocity_scale", 0.8)
 
         self.declare_parameter(
             "max_joint_accelerations",
