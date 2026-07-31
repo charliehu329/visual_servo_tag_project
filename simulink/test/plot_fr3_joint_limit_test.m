@@ -28,11 +28,11 @@
 %% =========================================================
 
 % 与Mapper一致：中央60%范围内不启动回中。
-centerFreeRatio = 0.60;
+centerFreeRatio = 0.80;
 
 % 与velocity_command_node一致：
 % 最终速度上限 = FR3官方速度上限 * maxVelocityScale
-maxVelocityScale = 0.80;
+maxVelocityScale = 0.20;
 
 % 与velocity_command_node一致，单位rad/s^2。
 maxJointAccelerations = [ ...

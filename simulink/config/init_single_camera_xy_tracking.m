@@ -21,9 +21,10 @@ rho_hat = 1/Z_hat;
 Kpx = 1.0;
 Kpy = 1.0;
 k_ff = 0.5;
-gamma_adapt = 0.0;
-sigma_adapt = 0.0;
-adapt_max = 0.0;
+
+required_valid_frames = 5;
+measurement_reset_timeout = 1.0;
+ff_ramp_time = 0.20;
 
 enable_proportional = true;
 enable_ekf_feedforward = true;
