@@ -26,7 +26,7 @@ sigma_adapt = 0.0;
 adapt_max = 0.0;
 
 enable_proportional = true;
-enable_ekf_feedforward = false;
+enable_ekf_feedforward = true;
 enable_adaptation = false;
 controller_enable = true;
 USE_ROS = true;
@@ -37,8 +37,8 @@ a_xy_max = 2.0;
 
 % EKF state order: [X;Y;Vx;Vy;Ax;Ay] in a local fixed XY frame.
 P0 = diag([0.05^2, 0.05^2, 0.20^2, 0.20^2, 0.50^2, 0.50^2]);
-Q_ekf = diag([1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4]);
-R_ekf = diag([1e-1, 1e-1]);
+Q_ekf = diag([1e-12, 1e-12, 1e-12, 1e-12, 1e-4, 1e-4]);
+R_ekf = diag([1e-8, 1e-8]);
 ekf_gate_threshold = 5.991;
 ekf_reset_timeout_sec = 0.50;
 
