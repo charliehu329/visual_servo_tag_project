@@ -29,15 +29,9 @@ apriltag_detector:
 
 velocity_mapper_node:
   ros__parameters:
-    # 留空时使用本包config/urdf/fr3.urdf。
     urdf_path: ""
+    end_effector_frame: "fr3_hand_tcp"
 
-    # 必须与URDF中的末端帧名称一致。
-    end_effector_frame: "fr3_link8"
-
-    # 相机速度到末端速度的手眼变换。
-    #
-    # 已替换为标定结果。
     T_end_effector_camera: [
       0.685367986922,  0.727986036940,  0.017522914211, -0.0495,
       -0.727707409066,  0.683826802626,  0.053130319028,  0.0191,
@@ -45,46 +39,11 @@ velocity_mapper_node:
       0.0,             0.0,             0.0,             1.0
     ]
 
-    # Jacobian阻尼最小二乘系数。
-    damping: 0.02
-
-    # Python速度映射和关节命令计算频率。
-    publish_rate_hz: 120.0
-
-    # 0表示不限制运行总时长。
-    duration_sec: 0.0
-
-    # 默认不向下游发送关节速度。
-    dry_run: true
+    dry_run: false
 
     joint_state_topic: "/franka/joint_states"
     visual_velocity_topic: "/simulink/camera_velocity"
-
-    # velocity_mapper_node发布的关节速度,velocity_command_node订阅。
     command_topic: "/velocity_mapper_node/target_joints_velocities"
-
-    # mapper层关节速度限制，单位rad/s。
-    max_joint_velocities:
-      - 0.6
-      - 0.6
-      - 0.6
-      - 0.6
-      - 0.6
-      - 0.6
-      - 0.6
-
-    # mapper层关节加速度限制，单位rad/s²。
-    max_joint_accelerations:
-      - 0.80
-      - 0.80
-      - 0.80
-      - 0.80
-      - 0.80
-      - 0.80
-      - 0.80
-
-    visual_velocity_timeout_sec: 0.20
-    joint_state_timeout_sec: 0.10
 
 
 velocity_command_node:

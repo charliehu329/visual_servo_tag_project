@@ -10,12 +10,12 @@ ros2 launch velocity_servo_tag full_system.launch.py \
 
 完整系统启动入口：
 
-    Franka硬件
-        → 底层关节速度控制器
-        → velocity_command_node
-        → AprilTag detector
-        → Simulink
-        → velocity_mapper_node
+AprilTag detector
+    → Simulink
+    → velocity_mapper_node
+    → velocity_command_node
+    → 底层关节速度控制器
+    → Franka硬件
 
 默认安全设置：
 
