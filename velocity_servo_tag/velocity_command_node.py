@@ -1,266 +1,614 @@
 #!/usr/bin/env python3
 """
-极简视觉速度映射节点。
+velocity_command_node.py
 
 功能：
-1. 读取FR3当前7维关节角。
-2. 接收相机坐标系速度 V_c=[vx,vy,vz,wx,wy,wz]。
-3. 根据手眼矩阵将V_c转换为末端速度V_e。
-4. 计算Jacobian并用伪逆得到任务关节速度。
-5. 当关节进入自身范围外侧40%时，在Jacobian零空间内推动关节回中。
-6. 发布7维关节速度给velocity_command_node。
+    接收7维目标关节速度，对其进行有效性检查、速度限制、
+    加速度限制和通信超时保护，然后发送给 Franka 底层速度控制器。
 
-说明：
-- 中间60%的关节范围不干预。
-- 不做速度限幅、加速度限幅、超时检查或平滑处理。
-- 最终安全限制仍由velocity_command_node完成。
+订阅：
+    /velocity_mapper_node/target_joints_velocities
+        std_msgs/msg/Float64MultiArray
+        [dq1, dq2, dq3, dq4, dq5, dq6, dq7]
+
+发布：
+    /joint_velocity_example_controller/commands
+        std_msgs/msg/Float64MultiArray
+
+模式：
+    zero:
+        持续向底层控制器发送零速度，默认安全模式。
+
+    topic:
+        接收外部7维关节速度并转发给底层控制器。
+
+安全机制：
+    1. 检查命令长度是否为7。
+    2. 拒绝包含 NaN 或 Inf 的命令。
+    3. 按 FR3 关节速度上限同比例缩放。
+    4. 限制相邻控制周期的关节速度变化量。
+    5. 外部命令超时后平滑减速至零。
+    6. 节点退出前平滑减速至零。
 """
 
-import os
-import xml.etree.ElementTree as ET
+import time
 
 import numpy as np
 import rclpy
-
-from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
-from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
-from velocity_servo_tag.robot_kinematics import FrankaKinematics
+
+NUM_JOINTS = 7
+
+# FR3硬件关节速度上限，单位 rad/s。
+FR3_MAX_JOINT_VELOCITIES = np.asarray(
+    [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26],
+    dtype=float,
+)
 
 
-JOINT_CENTER_START_RATIO = 0.60
-JOINT_CENTER_GAIN = 0.20
-
-
-class VelocityMapperNode(Node):
+class VelocityCommandNode(Node):
+    """Franka FR3 关节速度命令桥接节点。"""
 
     def __init__(self):
-        super().__init__("velocity_mapper_node")
+        super().__init__("velocity_command_node")
 
-        self.declare_parameter("urdf_path", "")
-        self.declare_parameter("end_effector_frame", "fr3_hand_tcp")
+        # =====================================================
+        # 参数声明
+        # =====================================================
+
+        self.declare_parameter("mode", "zero")
+        self.declare_parameter("publish_rate_hz", 120.0)
+        self.declare_parameter("max_velocity_scale", 0.8)
+
         self.declare_parameter(
-            "T_end_effector_camera",
-            [
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 1.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0,
-            ],
+            "max_joint_accelerations",
+            [0.20] * NUM_JOINTS,
         )
-        self.declare_parameter("dry_run", False)
+
         self.declare_parameter(
-            "joint_state_topic",
-            "/franka/joint_states",
+            "target_velocity_timeout_sec",
+            0.15,
         )
+
         self.declare_parameter(
-            "visual_velocity_topic",
-            "/simulink/camera_velocity",
-        )
-        self.declare_parameter(
-            "command_topic",
+            "input_topic",
             "/velocity_mapper_node/target_joints_velocities",
         )
 
-        urdf_path = str(
-            self.get_parameter("urdf_path").value
+        self.declare_parameter(
+            "command_topic",
+            "/joint_velocity_example_controller/commands",
         )
 
-        if not urdf_path:
-            urdf_path = os.path.join(
-                get_package_share_directory("velocity_servo_tag"),
-                "config",
-                "urdf",
-                "fr3.urdf",
-            )
+        # =====================================================
+        # 参数读取
+        # =====================================================
 
-        end_effector_frame = str(
-            self.get_parameter("end_effector_frame").value
+        self.mode = str(
+            self.get_parameter("mode").value
         )
 
-        self.T_e_c = np.asarray(
+        self.publish_rate_hz = float(
+            self.get_parameter("publish_rate_hz").value
+        )
+
+        self.max_velocity_scale = float(
+            self.get_parameter("max_velocity_scale").value
+        )
+
+        self.max_joint_accelerations = np.asarray(
             self.get_parameter(
-                "T_end_effector_camera"
+                "max_joint_accelerations"
             ).value,
             dtype=float,
-        ).reshape(4, 4)
+        ).reshape(-1)
 
-        self.dry_run = bool(
-            self.get_parameter("dry_run").value
+        self.target_velocity_timeout_sec = float(
+            self.get_parameter(
+                "target_velocity_timeout_sec"
+            ).value
         )
 
-        self.q_min, self.q_max = self.read_joint_limits(
-            urdf_path
-        )
-        self.q_mid = 0.5 * (self.q_min + self.q_max)
-        self.q_half_range = 0.5 * (
-            self.q_max - self.q_min
+        self.input_topic = str(
+            self.get_parameter("input_topic").value
         )
 
-        self.kinematics = FrankaKinematics(
-            urdf_path=urdf_path,
-            end_effector_frame=end_effector_frame,
+        self.command_topic = str(
+            self.get_parameter("command_topic").value
         )
 
-        self.q = None
+        self.validate_parameters()
 
-        self.create_subscription(
-            JointState,
-            str(
-                self.get_parameter(
-                    "joint_state_topic"
-                ).value
-            ),
-            self.joint_state_callback,
-            10,
+        self.max_joint_velocities = (
+            FR3_MAX_JOINT_VELOCITIES *
+            self.max_velocity_scale
         )
 
-        self.create_subscription(
-            Float64MultiArray,
-            str(
-                self.get_parameter(
-                    "visual_velocity_topic"
-                ).value
-            ),
-            self.visual_velocity_callback,
-            10,
-        )
+        # =====================================================
+        # 状态
+        # =====================================================
 
-        self.publisher = self.create_publisher(
-            Float64MultiArray,
-            str(
-                self.get_parameter(
-                    "command_topic"
-                ).value
-            ),
-            10,
-        )
-
-    @staticmethod
-    def read_joint_limits(urdf_path):
-        root = ET.parse(urdf_path).getroot()
-
-        q_min = []
-        q_max = []
-
-        for joint_index in range(1, 8):
-            joint = root.find(
-                f".//joint[@name='fr3_joint{joint_index}']"
-            )
-            limit = joint.find("limit")
-
-            q_min.append(float(limit.attrib["lower"]))
-            q_max.append(float(limit.attrib["upper"]))
-
-        return (
-            np.asarray(q_min, dtype=float),
-            np.asarray(q_max, dtype=float),
-        )
-
-    def joint_state_callback(self, msg):
-        joint = dict(zip(msg.name, msg.position))
-
-        self.q = np.asarray(
-            [
-                joint["fr3_joint1"],
-                joint["fr3_joint2"],
-                joint["fr3_joint3"],
-                joint["fr3_joint4"],
-                joint["fr3_joint5"],
-                joint["fr3_joint6"],
-                joint["fr3_joint7"],
-            ],
+        # 最近一次收到的合法目标速度。
+        self.target_q_dot = np.zeros(
+            NUM_JOINTS,
             dtype=float,
         )
 
-    def visual_velocity_callback(self, msg):
-        if self.q is None:
+        # 当前实际发布的速度。
+        self.commanded_q_dot = np.zeros(
+            NUM_JOINTS,
+            dtype=float,
+        )
+
+        self.last_target_time = None
+        self.last_update_time = None
+        self.stop_reason = None
+
+        # =====================================================
+        # ROS接口
+        # =====================================================
+
+        # 只订阅输入话题，不再向该话题发布echo消息。
+        self.target_subscription = self.create_subscription(
+            Float64MultiArray,
+            self.input_topic,
+            self.target_callback,
+            10,
+        )
+
+        # 唯一输出：Franka底层控制器命令话题。
+        self.command_publisher = self.create_publisher(
+            Float64MultiArray,
+            self.command_topic,
+            10,
+        )
+
+        self.timer = self.create_timer(
+            1.0 / self.publish_rate_hz,
+            self.timer_callback,
+        )
+
+        self.get_logger().info(
+            "VelocityCommandNode started | "
+            f"mode={self.mode} | "
+            f"rate={self.publish_rate_hz:.1f} Hz | "
+            f"input={self.input_topic} | "
+            f"output={self.command_topic}"
+        )
+
+        self.get_logger().info(
+            "Maximum joint velocities: "
+            f"{self.max_joint_velocities.tolist()} rad/s"
+        )
+
+        self.get_logger().info(
+            "Maximum joint accelerations: "
+            f"{self.max_joint_accelerations.tolist()} rad/s^2"
+        )
+
+        if self.mode == "zero":
+            self.get_logger().warning(
+                "ZERO mode is active. "
+                "Only zero joint velocity will be sent."
+            )
+        else:
+            self.get_logger().info(
+                "TOPIC mode is active. "
+                "Waiting for external joint velocity commands."
+            )
+
+    def validate_parameters(self):
+        """检查节点参数是否合法。"""
+
+        if self.mode not in ("zero", "topic"):
+            raise ValueError(
+                "mode must be 'zero' or 'topic', "
+                f"but got '{self.mode}'."
+            )
+
+        if (
+            not np.isfinite(self.publish_rate_hz)
+            or self.publish_rate_hz <= 0.0
+        ):
+            raise ValueError(
+                "publish_rate_hz must be positive and finite."
+            )
+
+        if (
+            not np.isfinite(self.max_velocity_scale)
+            or self.max_velocity_scale <= 0.0
+            or self.max_velocity_scale > 1.0
+        ):
+            raise ValueError(
+                "max_velocity_scale must be in (0, 1]."
+            )
+
+        if (
+            self.max_joint_accelerations.shape !=
+            (NUM_JOINTS,)
+            or not np.all(
+                np.isfinite(
+                    self.max_joint_accelerations
+                )
+            )
+            or np.any(
+                self.max_joint_accelerations <= 0.0
+            )
+        ):
+            raise ValueError(
+                "max_joint_accelerations must contain "
+                "7 positive finite values."
+            )
+
+        if (
+            not np.isfinite(
+                self.target_velocity_timeout_sec
+            )
+            or self.target_velocity_timeout_sec <= 0.0
+        ):
+            raise ValueError(
+                "target_velocity_timeout_sec "
+                "must be positive and finite."
+            )
+
+        if not self.input_topic:
+            raise ValueError(
+                "input_topic cannot be empty."
+            )
+
+        if not self.command_topic:
+            raise ValueError(
+                "command_topic cannot be empty."
+            )
+
+        if self.input_topic == self.command_topic:
+            raise ValueError(
+                "input_topic and command_topic "
+                "must be different."
+            )
+
+    def target_callback(self, message):
+        """接收外部7维目标关节速度。"""
+
+        if self.mode != "topic":
             return
 
-        V_c = np.asarray(msg.data, dtype=float)
+        data = np.asarray(
+            message.data,
+            dtype=float,
+        ).reshape(-1)
 
-        R_e_c = self.T_e_c[:3, :3]
-        t_e_c = self.T_e_c[:3, 3]
+        if data.shape != (NUM_JOINTS,):
+            self.enter_safe_stop(
+                "Invalid command length: "
+                f"expected 7, got {data.size}."
+            )
+            return
 
-        t_skew = np.asarray(
-            [
-                [0.0, -t_e_c[2], t_e_c[1]],
-                [t_e_c[2], 0.0, -t_e_c[0]],
-                [-t_e_c[1], t_e_c[0], 0.0],
-            ]
+        if not np.all(np.isfinite(data)):
+            self.enter_safe_stop(
+                "Joint velocity command contains NaN or Inf."
+            )
+            return
+
+        self.target_q_dot = (
+            self.limit_joint_velocity(data)
         )
 
-        adjoint_e_c = np.zeros((6, 6))
-        adjoint_e_c[:3, :3] = R_e_c
-        adjoint_e_c[:3, 3:] = t_skew @ R_e_c
-        adjoint_e_c[3:, 3:] = R_e_c
+        self.last_target_time = (
+            self.get_clock().now()
+        )
 
-        V_e = adjoint_e_c @ V_c
+        if self.stop_reason is not None:
+            self.get_logger().info(
+                "Valid joint velocity command recovered."
+            )
+            self.stop_reason = None
 
-        J = np.asarray(
-            self.kinematics.compute_jacobian(self.q),
+    def limit_joint_velocity(self, q_dot):
+        """同比例缩放7维关节速度，保持速度方向。"""
+
+        q_dot = np.asarray(
+            q_dot,
+            dtype=float,
+        ).reshape(NUM_JOINTS)
+
+        ratios = (
+            np.abs(q_dot) /
+            self.max_joint_velocities
+        )
+
+        scale = max(
+            1.0,
+            float(np.max(ratios)),
+        )
+
+        return q_dot / scale
+
+    def compute_dt(self, now):
+        """计算速度变化限制所使用的时间步长。"""
+
+        nominal_dt = (
+            1.0 /
+            self.publish_rate_hz
+        )
+
+        if self.last_update_time is None:
+            dt = nominal_dt
+        else:
+            dt = (
+                now -
+                self.last_update_time
+            ).nanoseconds * 1e-9
+
+            if (
+                not np.isfinite(dt)
+                or dt <= 0.0
+            ):
+                dt = nominal_dt
+
+            # 定时器卡顿后不允许一次跨越过大速度增量。
+            dt = min(
+                float(dt),
+                nominal_dt,
+            )
+
+        self.last_update_time = now
+
+        return max(
+            float(dt),
+            1e-6,
+        )
+
+    def command_is_fresh(self, now):
+        """判断外部目标速度是否仍在超时时间内。"""
+
+        if self.last_target_time is None:
+            return False, None
+
+        age_sec = (
+            now -
+            self.last_target_time
+        ).nanoseconds * 1e-9
+
+        age_sec = max(
+            0.0,
+            float(age_sec),
+        )
+
+        return (
+            age_sec <=
+            self.target_velocity_timeout_sec,
+            age_sec,
+        )
+
+    def limit_velocity_change(
+        self,
+        target_q_dot,
+        dt,
+    ):
+        """限制每个关节相邻控制周期的速度变化量。"""
+
+        target_q_dot = self.limit_joint_velocity(
+            target_q_dot
+        )
+
+        max_delta = (
+            self.max_joint_accelerations *
+            float(dt)
+        )
+
+        delta = (
+            target_q_dot -
+            self.commanded_q_dot
+        )
+
+        delta = np.clip(
+            delta,
+            -max_delta,
+            max_delta,
+        )
+
+        new_command = (
+            self.commanded_q_dot +
+            delta
+        )
+
+        new_command = self.limit_joint_velocity(
+            new_command
+        )
+
+        # 接近零时明确归零，避免残留极小速度。
+        if (
+            np.allclose(
+                target_q_dot,
+                0.0,
+                atol=1e-12,
+            )
+            and np.all(
+                np.abs(new_command) <= max_delta
+            )
+        ):
+            new_command = np.zeros(
+                NUM_JOINTS,
+                dtype=float,
+            )
+
+        self.commanded_q_dot = new_command
+
+        return new_command.copy()
+
+    def publish_command(self, q_dot):
+        """发布7维关节速度到底层控制器。"""
+
+        message = Float64MultiArray()
+        message.data = (
+            np.asarray(
+                q_dot,
+                dtype=float,
+            )
+            .reshape(NUM_JOINTS)
+            .tolist()
+        )
+
+        self.command_publisher.publish(
+            message
+        )
+
+    def enter_safe_stop(self, reason):
+        """记录安全停止原因，并将目标速度设为零。"""
+
+        self.target_q_dot = np.zeros(
+            NUM_JOINTS,
             dtype=float,
         )
 
-        J_pinv = np.linalg.pinv(J)
-
-        # 主任务：完成相机速度。
-        q_dot_task = J_pinv @ V_e
-
-        # 归一化关节位置：
-        # 0表示关节中心，±1表示上下限。
-        q_normalized = (
-            (self.q - self.q_mid)
-            / self.q_half_range
-        )
-
-        # 中间60%不干预，进入外侧40%后逐渐增强。
-        activation = np.clip(
-            (
-                np.abs(q_normalized)
-                - JOINT_CENTER_START_RATIO
+        if reason != self.stop_reason:
+            self.get_logger().warning(
+                f"Safety stop: {reason}"
             )
-            / (1.0 - JOINT_CENTER_START_RATIO),
-            0.0,
-            1.0,
+            self.stop_reason = reason
+
+    def timer_callback(self):
+        """周期计算并发布安全关节速度。"""
+
+        now = self.get_clock().now()
+        dt = self.compute_dt(now)
+
+        if self.mode == "zero":
+            target = np.zeros(
+                NUM_JOINTS,
+                dtype=float,
+            )
+
+        else:
+            fresh, age_sec = (
+                self.command_is_fresh(now)
+            )
+
+            if fresh:
+                target = self.target_q_dot.copy()
+            else:
+                if age_sec is None:
+                    reason = (
+                        "Waiting for first target "
+                        "velocity command."
+                    )
+                else:
+                    reason = (
+                        "Target velocity timeout: "
+                        f"{age_sec:.3f} s."
+                    )
+
+                self.enter_safe_stop(reason)
+
+                target = np.zeros(
+                    NUM_JOINTS,
+                    dtype=float,
+                )
+
+        command = self.limit_velocity_change(
+            target_q_dot=target,
+            dt=dt,
         )
 
-        q_dot_center = (
-            -JOINT_CENTER_GAIN
-            * activation**2
-            * np.clip(q_normalized, -1.0, 1.0)
+        self.publish_command(command)
+
+    def ramp_to_zero_before_shutdown(self):
+        """节点退出前，在有限时间内平滑减速到零。"""
+
+        if not rclpy.ok():
+            return
+
+        nominal_dt = (
+            1.0 /
+            self.publish_rate_hz
         )
 
-        # 零空间投影：尽量不影响相机速度主任务。
-        null_projector = (
-            np.eye(7)
-            - J_pinv @ J
+        initial_speed = np.abs(
+            self.commanded_q_dot
         )
 
-        q_dot = (
-            q_dot_task
-            + null_projector @ q_dot_center
+        required_time = float(
+            np.max(
+                initial_speed /
+                self.max_joint_accelerations
+            )
         )
 
-        if not self.dry_run:
-            msg_out = Float64MultiArray()
-            msg_out.data = q_dot.tolist()
-            self.publisher.publish(msg_out)
+        deadline = (
+            time.monotonic() +
+            required_time +
+            0.20
+        )
+
+        zero_target = np.zeros(
+            NUM_JOINTS,
+            dtype=float,
+        )
+
+        while (
+            rclpy.ok()
+            and time.monotonic() < deadline
+            and not np.allclose(
+                self.commanded_q_dot,
+                0.0,
+                atol=1e-12,
+            )
+        ):
+            command = self.limit_velocity_change(
+                target_q_dot=zero_target,
+                dt=nominal_dt,
+            )
+
+            self.publish_command(command)
+
+            time.sleep(nominal_dt)
+
+        # 最后明确发布零速度。
+        self.commanded_q_dot = zero_target.copy()
+        self.publish_command(zero_target)
+
+        self.get_logger().info(
+            "Joint velocity ramped to zero."
+        )
 
 
 def main(args=None):
+    """ROS 2节点入口。"""
+
     rclpy.init(args=args)
-    node = VelocityMapperNode()
+
+    node = None
 
     try:
+        node = VelocityCommandNode()
         rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
 
-    node.destroy_node()
-    rclpy.shutdown()
+    except KeyboardInterrupt:
+        if node is not None:
+            node.get_logger().info(
+                "Keyboard interrupt received."
+            )
+
+    except Exception as error:
+        if node is not None:
+            node.get_logger().error(
+                f"Unexpected error: {error}"
+            )
+        raise
+
+    finally:
+        if node is not None:
+            if rclpy.ok():
+                node.ramp_to_zero_before_shutdown()
+
+            node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
