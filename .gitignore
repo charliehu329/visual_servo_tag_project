@@ -4,6 +4,8 @@ build/
 install/
 log/
 .pytest_cache/
+.DS_Store
++bus_conv_fcns/
 # ================= Simulink 缓存文件 =================
 # Simulink 编译缓存
 *.slxc
