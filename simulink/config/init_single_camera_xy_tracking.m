@@ -14,7 +14,7 @@ cx = 1000;
 cy = 592;
 
 % Fixed working-plane depth.
-Z_hat = 1;
+Z_hat = 0.5;
 rho_hat = 1/Z_hat;
 
 % Proportional + EKF feedforward + leaky adaptive residual controller.
