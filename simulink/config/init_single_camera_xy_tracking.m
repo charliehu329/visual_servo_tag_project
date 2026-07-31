@@ -23,7 +23,7 @@ Kpy = 1.0;
 k_ff = 0.5;
 
 required_valid_frames = 5;
-measurement_reset_timeout = 1.0;
+measurement_reset_timeout = 2.0;
 ff_ramp_time = 0.20;
 
 enable_proportional = true;
