@@ -485,6 +485,9 @@ class AprilTagDetectorNode(Node):
         )
 
         self.target_was_detected = False
+        self.last_detection_time = None
+        self.last_detection_feature = None
+        self.last_pixel_velocity = None
         # 检测相机实时读取的频率
         # =====================================================
         # 统计 camera.read() 成功返回图像的实际频率。
@@ -576,7 +579,8 @@ class AprilTagDetectorNode(Node):
     def draw_detection(
         self,
         image,
-        feature
+        feature,
+        pixel_velocity=None
     ):
         """
         绘制标签边框、中心和当前检测信息。
@@ -651,6 +655,20 @@ class AprilTagDetectorNode(Node):
                 2
             )
 
+            if pixel_velocity is not None:
+                cv2.putText(
+                    display_image,
+                    (
+                        f"du/dt={pixel_velocity[0]:.1f} px/s, "
+                        f"dv/dt={pixel_velocity[1]:.1f} px/s"
+                    ),
+                    (20, 75),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (255, 255, 0),
+                    2
+                )
+
         cv2.imshow(
             "AprilTag Detector",
             display_image
@@ -671,6 +689,9 @@ class AprilTagDetectorNode(Node):
 
         if image is None:
             self.detector.reset_tracking_state()
+            self.last_detection_time = None
+            self.last_detection_feature = None
+            self.last_pixel_velocity = None
             self.publish_invalid_target()
 
             if self.target_was_detected:
@@ -710,6 +731,9 @@ class AprilTagDetectorNode(Node):
         )
 
         if feature is None:
+            self.last_detection_time = None
+            self.last_detection_feature = None
+            self.last_pixel_velocity = None
             self.publish_invalid_target()
 
             if self.target_was_detected:
@@ -720,6 +744,30 @@ class AprilTagDetectorNode(Node):
 
             self.target_was_detected = False
         else:
+            detection_time = time.monotonic()
+
+            if (
+                self.last_detection_time is not None and
+                self.last_detection_feature is not None
+            ):
+                delta_time = (
+                    detection_time -
+                    self.last_detection_time
+                )
+
+                if delta_time > 0.0:
+                    self.last_pixel_velocity = (
+                        (feature - self.last_detection_feature) /
+                        delta_time
+                    )
+                else:
+                    self.last_pixel_velocity = None
+            else:
+                self.last_pixel_velocity = None
+
+            self.last_detection_time = detection_time
+            self.last_detection_feature = feature.copy()
+
             self.publish_target(
                 feature
             )
@@ -734,7 +782,8 @@ class AprilTagDetectorNode(Node):
         if self.show_window:
             self.draw_detection(
                 image,
-                feature
+                feature,
+                self.last_pixel_velocity
             )
 
     def destroy_node(self):
