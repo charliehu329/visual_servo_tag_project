@@ -75,64 +75,6 @@ velocity_command_node:
 
 
 
-fast_xy_visual_servo:
-  ros__parameters:
-    # 相机
-    camera_index: 2
-    camera_width: 1920
-    camera_height: 1080
-    camera_fps: 60.0
-
-    # 1920×1080相机内参
-    fx_px: 2057.0
-    fy_px: 2054.0
-    cx_px: 1000.0
-    cy_px: 592.0
-
-    # AprilTag
-    tag_family: "tag36h11"
-    target_tag_id: 0
-    detector_threads: 8
-    quad_decimate: 2.0
-
-    # 固定工作距离尺度
-    motion_scale_m: 0.75
-
-    # 初次测试先只开比例控制
-    kp_x: 2.0
-    kp_y: 2.0
-    kff: 0.0
-
-    # 初次硬件测试先限制到较低速度
-    camera_speed_max_m_s: 0.30
-
-    # EKF
-    ekf_measurement_noise_px: 1.5
-    ekf_acceleration_noise_m_s2: 2.0
-
-    # 输出给现有mapper
-    camera_velocity_topic: "/simulink/camera_velocity"
-
-    # 调试输出
-    debug_topic: "/fast_xy_visual_servo/debug"
-
-
-# Simulink v2 ROS 2接口。
-# MATLAB初始化脚本也从本节读取，修改后无需改SLX。
-simulink_ros2:
-  ros__parameters:
-    sample_time_sec: 0.016666666666666666
-    vision_topic: "/vision_double/target_features"
-    joint_state_topic: "/franka/joint_states"
-    focal_state_topic: "/vision_double/focal_lengths_mm"
-    camera_velocity_topic: "/simulink/camera_velocity"
-    zoom_velocity_topic: "/simulink/zoom_velocities_mm_s"
-    input_timeout_sec: 0.20
-    vision_message_length: 8
-    focal_message_length: 2
-    camera_velocity_message_length: 6
-    zoom_velocity_message_length: 2
-
 
 
 
