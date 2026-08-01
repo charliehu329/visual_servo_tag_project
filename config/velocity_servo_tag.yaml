@@ -1,0 +1,106 @@
+# velocity_servo_tag.yaml
+#
+# AprilTag检测、相机速度映射和Franka关节速度命令节点的统一配置。
+
+
+apriltag_detector:
+  ros__parameters:
+    camera_index: 2
+    camera_width: 1920
+    camera_height: 1080
+    camera_fps: 60.0
+
+    tag_family: "tag36h11"
+    target_tag_id: 0
+
+    detector_threads: 8
+    quad_decimate: 2.0
+    quad_sigma: 0.0
+    refine_edges: true
+    decode_sharpening: 0.25
+
+    # 一阶低通滤波系数：
+    # 1.0表示不滤波，数值越小越平滑。
+    uv_filter_alpha: 1.0
+
+    target_position_topic: "/apriltag_detector/target_position"
+    show_window: true
+
+
+velocity_mapper_node:
+  ros__parameters:
+    urdf_path: ""
+    end_effector_frame: "fr3_hand_tcp"
+
+    T_end_effector_camera: [
+      0.685367986922,  0.727986036940,  0.017522914211, -0.0495,
+      -0.727707409066,  0.683826802626,  0.053130319028,  0.0191,
+      0.026695491993, -0.049165374297,  0.998433831897,  0.1396,
+      0.0,             0.0,             0.0,             1.0
+    ]
+
+    dry_run: false
+
+    joint_state_topic: "/franka/joint_states"
+    visual_velocity_topic: "/simulink/camera_velocity"
+    command_topic: "/velocity_mapper_node/target_joints_velocities"
+
+    # Mapper独立输入看门狗。任一输入未收到、非法或超时均发布七维零目标。
+    joint_state_timeout_sec: 0.10
+    visual_velocity_timeout_sec: 0.10
+    mapper_watchdog_rate_hz: 100.0
+
+    # 当前接口没有独立valid字段，六维速度范数低于该值时关闭主任务和零空间。
+    camera_velocity_zero_epsilon: 1.0e-6
+
+    # 关节接近自身位置范围外侧时，使用smoothstep平滑启用回中任务。
+    nullspace_activation_start_ratio: 0.80
+    nullspace_activation_full_ratio: 0.95
+    nullspace_centering_gain: 0.10
+
+    # 当前主模型只使用相机XY平移速度，因此这里以XY速度范数进行任务门控。
+    nullspace_task_speed_fade_start: 0.02
+    nullspace_task_speed_disable: 0.10
+
+    # 接近Jacobian奇异位形时平滑关闭零空间任务。
+    nullspace_sigma_disable: 0.03
+    nullspace_sigma_full: 0.08
+
+    # 仅作用于零空间项；最终整组命令仍由velocity_command_node限幅和平滑。
+    nullspace_max_joint_velocity: 0.10
+    nullspace_max_joint_acceleration: 0.30
+
+
+velocity_command_node:
+  ros__parameters:
+    # 默认zero最安全。
+    # 真正接收mapper速度时由launch覆盖为topic。
+    mode: "zero"
+
+    publish_rate_hz: 120.0
+
+    # 相对于FR3官方关节速度上限的最终保护比例。
+    max_velocity_scale: 0.80
+
+    # 底层命令桥接层的加速度限制，单位rad/s²。
+    max_joint_accelerations:
+      - 0.50
+      - 0.50
+      - 0.50
+      - 0.50
+      - 0.50
+      - 0.50
+      - 0.50
+
+    # mapper崩溃或停止发布后，超过此时间开始平滑减速。
+    target_velocity_timeout_sec: 0.15
+
+    input_topic: "/velocity_mapper_node/target_joints_velocities"
+    command_topic: "/joint_velocity_example_controller/commands"
+
+
+
+
+
+
+
