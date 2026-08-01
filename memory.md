@@ -817,3 +817,288 @@ memory.md
 1. 修改什么文件：`memory.md`
 2. 修改了什么内容：记录完整 Core Build、生成模型、固定逻辑和验证结果。
 3. 修改的原因、目的、作用：完成 Config 精简后的 Core 同步记录，明确本次没有维护已删除的模块化 Build 文件。
+## 2026-08-01 17:36：单目XY四状态CV EKF与命令相机运动输入
+
+### `simulink/single_vision_xy/single_camera_xy_tracking_isnew.slx`
+1. 修改什么文件：新增原始六状态单目模型副本。
+2. 修改了什么内容：按用户提供的模型原样复制，SHA256与来源文件一致。
+3. 修改原因、目的、作用：在仓库中补齐任务指定的基线模型并保证不被后续构建覆盖。
+4. 备注：未直接编辑SLX内部XML。
+
+### `simulink/single_vision_xy/single_camera_xy_tracking_cv_ekf.slx`
+1. 修改什么文件：新增四状态CV EKF正式模型。
+2. 修改了什么内容：使用Simulink API从原模型另存并重连command_velocity、Jacobian、相机速度输入、CV EKF、日志与控制器链路。
+3. 修改原因、目的、作用：估计相机系目标自身速度，补偿最终关节命令导致的相机XY运动。
+4. 备注：Update Diagram和0.05秒隔离ROS2仿真通过。
+
+### `simulink/config/init_single_camera_xy_tracking.m`
+1. 修改什么文件：新增原六状态模型初始化脚本。
+2. 修改了什么内容：保留六状态P0/Q/R、相机参数、控制参数、FR3与camera_link外参。
+3. 修改原因、目的、作用：让仓库中新补齐的原模型保持独立可加载。
+4. 备注：原模型InitFcn继续调用该脚本。
+
+### `simulink/config/init_single_camera_xy_tracking_cv_ekf.m`
+1. 修改什么文件：新增四状态模型初始化脚本。
+2. 修改了什么内容：P0/Q改为4×4，新增sigma_acc_cv和0.10秒command_velocity_timeout_sec，保留R、相机、控制和FR3参数。
+3. 修改原因、目的、作用：为相机系四状态匀速模型提供维度一致、单位明确的参数。
+4. 备注：脚本独立运行和参数断言通过。
+
+### `simulink/config/cv_ekf_step.m`
+1. 修改什么文件：新增可测试的线性Kalman Filter单步函数。
+2. 修改了什么内容：实现x_pred=A*x+B*u、协方差预测、NIS门控和Joseph协方差更新。
+3. 修改原因、目的、作用：模型与离线测试复用同一核心预测/更新公式。
+4. 备注：B的位置块为-Ts*I2。
+
+### `simulink/config/command_to_camera_velocity.m`
+1. 修改什么文件：新增关节命令到相机速度换算函数。
+2. 修改了什么内容：使用当前J和T将7维command_velocity换算为相机系2维线速度，并检查关节与命令超时。
+3. 修改原因、目的、作用：只向CV EKF提供新鲜、有限的已知相机运动输入。
+4. 备注：超时输出严格归零且valid=false。
+
+### `simulink/config/fr3.urdf`
+1. 修改什么文件：新增FR3机器人描述副本。
+2. 修改了什么内容：未改动URDF内容。
+3. 修改原因、目的、作用：供两个单目初始化脚本在仓库内独立导入机器人模型。
+4. 备注：MATLAB导入时仅出现原有关节home位置限位警告。
+
+### `simulink/build/single_vision_xy/build_single_camera_xy_tracking_cv_ekf.m`
+1. 修改什么文件：新增正式模型构建脚本。
+2. 修改了什么内容：使用load_system、save_system、add_block、delete_line、add_line和set_param完成另存、改名、端口扩展、重连与日志设置。
+3. 修改原因、目的、作用：提供可重复、可审查的官方API模型修改流程。
+4. 备注：构建脚本执行通过且不会保存对原模型的修改。
+
+### `simulink/build/single_vision_xy/block_scripts/velocity_command_subscriber_fcn.m`
+1. 修改什么文件：新增命令Subscriber的MATLAB Function源码模板。
+2. 修改了什么内容：增加command_count、command_age、command_is_new与Clock输入；非法帧不覆盖最后合法命令。
+3. 修改原因、目的、作用：避免永久使用最后一帧非零关节命令。
+4. 备注：command_acceleration继续仅用于日志。
+
+### `simulink/build/single_vision_xy/block_scripts/command_velocity_to_camera_fcn.m`
+1. 修改什么文件：新增Jacobian换算块源码模板。
+2. 修改了什么内容：将最终command_velocity而非实测joint_velocity送入现有Jacobian/Transform链路。
+3. 修改原因、目的、作用：生成CV EKF要求的v_camera_commanded和camera_command_valid。
+4. 备注：T_camera2base仅用于速度坐标转换。
+
+### `simulink/build/single_vision_xy/block_scripts/cv_ekf_controller_fcn.m`
+1. 修改什么文件：新增四状态CV EKF和控制器源码模板。
+2. 修改了什么内容：删除Base位置测量与Ax/Ay状态，加入二维相机运动输入；保留预热、复位、NIS、前馈渐入与XY限幅。
+3. 修改原因、目的、作用：使x_hat(3:4)表示目标自身速度而非目标相对相机速度。
+4. 备注：最终camera_velocity固定为[vx;vy;0;0;0;0]。
+
+### `simulink/test/test_single_camera_xy_tracking_cv_ekf.m`
+1. 修改什么文件：新增自动化测试脚本。
+2. 修改了什么内容：覆盖参数维度、输入符号、三类运动场景、Jacobian、命令超时、连线、日志、正式Topic、模型更新与短时仿真。
+3. 修改原因、目的、作用：验证静止目标/移动相机时目标自身速度仍收敛到0，并防止接口回归。
+4. 备注：全部测试通过。
+
+### `memory.md`
+1. 修改什么文件：更新本文件。
+2. 修改了什么内容：记录本次单目CV EKF新增文件、数据流、原因和验证结果。
+3. 修改原因、目的、作用：满足仓库变更可追溯要求。
+4. 备注：记录时间为2026-08-01 17:36。
+
+## 2026-08-01 21:33：Base系四状态CV KF与实测相机运动补偿
+
+### `simulink/single_vision_xy/single_camera_xy_tracking_base_cv_kf.slx`
+1. 修改什么文件：新增Base坐标系四状态CV KF正式模型，未覆盖`single_camera_xy_tracking_cv_ekf.slx`。
+2. 修改了什么内容：六元素目标消息经校验后，利用复用的Jacobian/Transform和实测关节速度完成相机三维Twist补偿；位置、速度分别更新Base系KF，估计速度旋回相机系后进入前馈。
+3. 修改原因、目的、作用：把Python差分速度按目标—相机相对速度处理，避免将相机运动误认为目标绝对运动或重复补偿。
+4. 备注：正式Topic不变，最终输出保持`[vx;vy;0;0;0;0]`；Update Diagram与0.05秒隔离ROS2仿真通过。
+
+### `simulink/config/init_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：新增Base CV KF初始化脚本。
+2. 修改了什么内容：定义4×4 P0/Q、独立R_position/R_velocity、两个NIS门限、控制/超时参数，并原样复用FR3相机外参。
+3. 修改原因、目的、作用：使Base系位置和速度测量拥有独立且单位一致的噪声模型。
+4. 备注：位置噪声0.005 m、差分速度噪声0.10 m/s为未标定保守初值，后续需按真实日志调整。
+
+### `simulink/config/parse_target_measurement.m`
+1. 修改什么文件：新增六元素视觉载荷解析函数。
+2. 修改了什么内容：严格解析`[valid,velocity_valid,X_C,Y_C,vx_rel_C,vy_rel_C]`，内部输出命名为`relative_velocity_C`。
+3. 修改原因、目的、作用：固定外部接口顺序，同时明确末两项是相机系相对速度而非绝对速度。
+4. 备注：位置单位m，速度单位m/s，位置无效时禁止单独使用速度。
+
+### `simulink/config/camera_measurement_to_base.m`
+1. 修改什么文件：新增相机测量到Base坐标系的纯MATLAB函数。
+2. 修改了什么内容：位置采用`R_BC*p_C+p_C_B`，速度采用`v_C_B+R_BC*v_rel_C+omega_C_B×(R_BC*p_C)`，并分别输出位置/速度有效标志。
+3. 修改原因、目的、作用：用实测相机平移和角速度把相对速度恢复为Base系目标绝对速度。
+4. 备注：相机Twist顺序按`geometricJacobian`核实为`[omega;v]`。
+
+### `simulink/config/base_cv_kf_step.m`
+1. 修改什么文件：新增Base系四状态KF单步纯MATLAB函数。
+2. 修改了什么内容：实现无B输入的`x^-=A*x`预测、独立位置/速度NIS门控和两次Joseph协方差更新。
+3. 修改原因、目的、作用：速度无效或异常时仍可使用位置测量，并消除旧相机速度预测输入造成的双重补偿。
+4. 备注：位置与差分速度噪声相关，当前独立更新加较大R_velocity属于工程近似。
+
+### `simulink/build/single_vision_xy/build_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：新增新模型的可重复构建脚本。
+2. 修改了什么内容：仅使用Simulink官方API另存母版、复用Jacobian/Transform、重建校验/测量转换/Base KF/日志模块并重连顶层信号。
+3. 修改原因、目的、作用：让SLX修改可审查、可重放，并确保原CV EKF母版不被覆盖。
+4. 备注：命令速度Subscriber只连接日志和诊断终止器，不进入补偿、KF或前馈。
+
+### `simulink/build/single_vision_xy/block_scripts/target_measurement_unpack_fcn.m`
+1. 修改什么文件：新增目标Subscriber的MATLAB Function源码模板。
+2. 修改了什么内容：缓存固定六元素ROS数组、消息计数和年龄。
+3. 修改原因、目的、作用：替换旧三元素`[valid,u,v]`解析，适配直接位置和相对速度输入。
+4. 备注：外部Topic保持`/apriltag_detector/target_position`。
+
+### `simulink/build/single_vision_xy/block_scripts/base_message_validation_fcn.m`
+1. 修改什么文件：新增目标与JointState校验模块源码模板。
+2. 修改了什么内容：分别验证位置、速度、关节构型和实测关节运动，并输出相机系位置/相对速度及有效关节量。
+3. 修改原因、目的、作用：支持相机运动无效时跳过速度测量，同时保留可用的位置测量链路。
+4. 备注：不使用命令关节速度作为实测运动回退值。
+
+### `simulink/build/single_vision_xy/block_scripts/measured_camera_twist_fcn.m`
+1. 修改什么文件：新增实测相机Twist换算模块源码模板。
+2. 修改了什么内容：以当前Jacobian乘实测`joint_velocity`，输出Base系六维`[omega;v]`、有效标志和相机到Base变换。
+3. 修改原因、目的、作用：提供视觉差分速度补偿所需的真实相机三维运动。
+4. 备注：JointState超时、Jacobian/Transform或Twist非有限时输出`camera_motion_valid=false`。
+
+### `simulink/build/single_vision_xy/block_scripts/camera_measurement_to_base_fcn.m`
+1. 修改什么文件：新增Simulink测量转换包装函数源码模板。
+2. 修改了什么内容：调用纯MATLAB转换函数，输出Base系位置、绝对速度及独立有效标志。
+3. 修改原因、目的、作用：让模型与离线测试复用同一完整平移/旋转补偿公式。
+4. 备注：相机运动无效时不允许将原始相对速度旋转后送入KF。
+
+### `simulink/build/single_vision_xy/block_scripts/base_cv_kf_controller_fcn.m`
+1. 修改什么文件：新增Base CV KF与控制器MATLAB Function源码模板。
+2. 修改了什么内容：实现首次位置/可选速度初始化、独立测量更新、预热/复位、Base速度旋回相机系、P反馈、KF前馈渐入和原有限幅结构。
+3. 修改原因、目的、作用：确保前馈唯一来自KF估计速度，且比例控制继续基于相机系位置并保持原符号。
+4. 备注：预测代码不含B矩阵、`v_camera_input`或`command_velocity`。
+
+### `simulink/test/test_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：新增13项自动化验收测试。
+2. 修改了什么内容：覆盖消息解析、位置变换、三类目标/相机运动、角速度补偿、无效速度/相机运动、独立NIS、前馈来源、移除B输入、比例等价、维度/日志/Topic、模型更新和短时仿真。
+3. 修改原因、目的、作用：验证静止目标在移动相机下仍估计为零绝对速度，并防止原始相对速度或命令速度绕过KF进入控制。
+4. 备注：全部13项测试和0.05秒隔离ROS2仿真通过；仅出现URDF原有home位置限位警告。
+
+### `memory.md`
+1. 修改什么文件：更新本文件。
+2. 修改了什么内容：逐文件记录Base CV KF新增模型、算法、构建模板与验证结果。
+3. 修改原因、目的、作用：满足仓库变更可追溯要求。
+4. 备注：记录时间为2026-08-01 21:33。
+## 2026-08-01 22:41：Base CV KF 安全修正与精简
+
+### `simulink/single_vision_xy/single_camera_xy_tracking_base_cv_kf.slx`
+1. 修改什么文件：原位更新最终单目 Base CV KF 模型。
+2. 修改了什么内容：增加 JointState 几何/运动有效标志、Twist 显式门控、KF 接受后位置保持、连续帧、前馈渐入和年龄差日志。
+3. 修改原因、目的、作用：阻断 JointState 超时和 NIS 异常位置绕过安全链路。
+4. 备注：`pre_fix` 备份未改；Update Diagram、重复原位构建和 0.05 s 隔离仿真通过。
+
+### `simulink/config/parse_target_measurement.m`
+1. 修改什么文件：精简六元素视觉消息解析函数。
+2. 修改了什么内容：严格检查 count=6、年龄、超时及前六项有限性，位置无效时强制速度无效。
+3. 修改原因、目的、作用：防止 NaN/Inf 标志被解释为 true。
+
+### `simulink/config/camera_measurement_to_base.m`
+1. 修改什么文件：精简相机测量到 Base 系转换函数。
+2. 修改了什么内容：保留平移、旋转、相机线速度和 `omega x r` 完整补偿，motion 无效时跳过速度。
+3. 修改原因、目的、作用：保持坐标转换单一职责并删除冗余注释。
+
+### `simulink/config/base_cv_kf_step.m`
+1. 修改什么文件：精简 Base CV KF 单步函数。
+2. 修改了什么内容：使用局部 `update2`，一次预测后顺序执行位置/速度 NIS 与 Joseph 更新。
+3. 修改原因、目的、作用：消除重复更新代码，保持无 `B*v_camera` 的四状态主线。
+
+### `simulink/config/init_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：整理 Base CV KF 初始化参数。
+2. 修改了什么内容：删除 `ekf_reset_timeout_sec`，保留唯一 `measurement_reset_timeout`，增加维度、对称性、正定性和门限断言。
+3. 修改原因、目的、作用：防止无效协方差和重复复位参数进入模型。
+
+### `simulink/build/single_vision_xy/block_scripts/base_message_validation_fcn.m`
+1. 修改什么文件：修正消息与 JointState 校验块源码。
+2. 修改了什么内容：显式输出 `joint_geometry_valid` 和 `joint_motion_valid`，几何有效性纳入 joint age 超时。
+3. 修改原因、目的、作用：防止旧位置或置零数组伪装有效 JointState。
+
+### `simulink/build/single_vision_xy/block_scripts/measured_camera_twist_fcn.m`
+1. 修改什么文件：修正实测相机 Twist 块源码。
+2. 修改了什么内容：增加显式几何/运动有效输入，无效时 Twist 严格归零且 motion valid=false。
+3. 修改原因、目的、作用：不再用 count/age 对置零后数组二次推断有效性。
+
+### `simulink/build/single_vision_xy/block_scripts/base_cv_kf_controller_fcn.m`
+1. 修改什么文件：修正 KF 与控制器块源码。
+2. 修改了什么内容：首帧速度不再直写状态；位置仅在 KF 接受后更新 hold；实现连续接受帧、无新帧保持、拒绝/超时清零、协方差运行时保护和前馈渐入。
+3. 修改原因、目的、作用：阻断异常视觉位置绕过 NIS 进入 P 控制。
+
+### `simulink/build/single_vision_xy/build_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：将构建脚本改为最终模型原位更新脚本。
+2. 修改了什么内容：更新 MATLAB Function 端口、参数向量、Twist 有效连线、年龄差和 28 项日志。
+3. 修改原因、目的、作用：保证不从六状态或相机系母版重建，且脚本可重复执行。
+
+### `simulink/test/test_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：扩展 Base CV KF 自动化测试。
+2. 修改了什么内容：数值执行解析、坐标补偿、JointState/Twist、KF和控制器，并验证参数断言、模型更新与短时 ROS2 隔离仿真。
+3. 修改原因、目的、作用：将用户指定的 17 类回归点变为可执行验证。
+4. 备注：17 项全部通过。
+
+### `memory.md`
+1. 修改什么文件：更新本文件。
+2. 修改了什么内容：记录本次模型安全修正、精简和验证结果。
+3. 修改原因、目的、作用：满足仓库变更可追溯要求。
+## 2026-08-01 23:34：视觉与 JointState ROS 源时间同步
+
+### `simulink/single_vision_xy/single_camera_xy_tracking_base_cv_kf.slx`
+1. 修改什么文件：原位更新正式单目 Base CV KF 模型。
+2. 修改了什么内容：接入视觉源时间戳、JointState Header 时间戳、固定容量缓冲、包围插值、同步门控和诊断日志。
+3. 修改原因、目的、作用：禁止视觉测量使用到达时最新 JointState，确保 Transform/Jacobian 对应视觉采集时刻。
+4. 备注：Update Diagram 和 0.05 s 隔离 ROS2 仿真通过。
+
+### `docs/target_measurement_timestamp_interface.md`
+1. 修改什么文件：新增八元素视觉消息时间戳接口文档。
+2. 修改了什么内容：定义 sec/nanosec 来源、非法条件和 legacy 拒绝规则。
+3. 修改原因、目的、作用：仓库内 Python 节点仅有三元素像素接口，不伪造实际六元素运动估计发布端的修改。
+
+### `simulink/config/parse_target_measurement.m`
+1. 修改什么文件：升级视觉消息解析函数。
+2. 修改了什么内容：严格解析 8 元素与 sec/nanosec，无效或零时间戳强制位置/速度无效。
+3. 修改原因、目的、作用：为严格 ROS 源时间匹配提供视觉时刻。
+
+### `simulink/config/joint_visual_time_aligner_step.m`
+1. 修改什么文件：新增纯 MATLAB 固定容量时间同步器。
+2. 修改了什么内容：实现 512 JointState 环形缓冲、16 视觉 pending 队列、包围查找、q/qdot 线性插值、等待/丢弃/时钟复位和计数。
+3. 修改原因、目的、作用：将唯一 JointState 历史与同步职责集中在可测试函数。
+
+### `simulink/config/init_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：增加时间同步配置。
+2. 修改了什么内容：定义缓冲容量、包围跨度、等待超时、时钟复位阈值及禁止外推/legacy 断言。
+3. 修改原因、目的、作用：使同步参数可调且集中校验。
+
+### `simulink/build/single_vision_xy/block_scripts/target_measurement_unpack_fcn.m`
+1. 修改什么文件：视觉 Subscriber 缓存改为 8 元素。
+2. 修改了什么内容：保留前六项并缓存 sec/nanosec。
+3. 修改原因、目的、作用：阻止旧 6 元素消息进入正式闭环。
+
+### `simulink/build/single_vision_xy/block_scripts/timestamped_visual_validation_fcn.m`
+1. 修改什么文件：新增视觉源时间校验块源码。
+2. 修改了什么内容：输出视觉位置/相对速度、源时间和有效标志。
+3. 修改原因、目的、作用：分离视觉解析与时间同步职责。
+
+### `simulink/build/single_vision_xy/block_scripts/joint_source_stamp_fcn.m`
+1. 修改什么文件：新增 JointState Header 时间戳转换块源码。
+2. 修改了什么内容：校验 sec/nanosec 并输出源时间与有效标志。
+3. 修改原因、目的、作用：区分 Header 源时间有效性与 Topic 接收超时。
+
+### `simulink/build/single_vision_xy/block_scripts/joint_visual_time_aligner_fcn.m`
+1. 修改什么文件：新增 Simulink 同步器包装块源码。
+2. 修改了什么内容：映射参数和 21 个对齐/诊断输出，显式统一模型标志类型。
+3. 修改原因、目的、作用：使纯 MATLAB 同步器可由 MATLAB Function 块代码生成。
+
+### `simulink/build/single_vision_xy/block_scripts/base_cv_kf_controller_fcn.m`
+1. 修改什么文件：增加同步时钟复位输入。
+2. 修改了什么内容：时钟向后跳变时立即清空 KF、hold、streak、ready 和前馈 ramp。
+3. 修改原因、目的、作用：防止跨 ROS 时钟 epoch 使用旧状态。
+
+### `simulink/build/single_vision_xy/build_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：扩展正式模型原位更新脚本。
+2. 修改了什么内容：读取 JointState Header，创建同步子系统，用 aligned q/qdot 重连 Transform/Jacobian，并新增 14 项同步日志。
+3. 修改原因、目的、作用：确保原始最新 JointState 只进入同步器，不再直接进入运动学补偿。
+
+### `simulink/test/test_single_camera_xy_tracking_base_cv_kf.m`
+1. 修改什么文件：重写为 17 项源时间同步回归测试。
+2. 修改了什么内容：覆盖时间戳校验、精确/中点插值、等待、丢弃、重复/乱序/复位、异步补偿、KF 收敛、旁路检查和环形回绕。
+3. 修改原因、目的、作用：对时间同步的每个安全边界进行可执行验证。
+4. 备注：17/17 通过。
+
+### `memory.md`
+1. 修改什么文件：更新本文件。
+2. 修改了什么内容：逐文件记录源时间同步、模型连线和验证结果。
+3. 修改原因、目的、作用：保留本轮修改的可追溯记录。
