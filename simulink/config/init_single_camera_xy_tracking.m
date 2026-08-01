@@ -44,8 +44,8 @@ ekf_reset_timeout_sec = 0.50;
 
 
 % Input watchdogs.
-target_timeout_sec = 0.20;
-joint_state_timeout_sec = 0.10;
+target_timeout_sec = 1.0;
+joint_state_timeout_sec = 0.50;
 
 % Offline plant and camera sensor.
 Z0 = Z_hat;
