@@ -22,3 +22,40 @@ simulink/test_results/**/*.mat
 # ================= MATLAB 临时文件 =================
 *.asv
 *.m~
+# ===================== Simulink 缓存/编译产物（最关键） =====================
+slprj/
+codegen/
+*.slxc
+*.slx.autosave
+*.mdl.autosave
+_automatically_generated/
+
+# MATLAB 临时文件
+*.asv
+*.bak
+*.log
+*.trace
+*.tmp
+*.fig
+*.mat
+*.p
+*.mex*
+mex_*.c
+rtw_*.c
+rtw_*.h
+
+# Simulink Project 个人配置（多人协作必加）
+*.prj.user
+sltest.prj.user
+
+# 仿真输出、测试报告
+reports/
+coverage/
+sltest_results/
+simout/
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
