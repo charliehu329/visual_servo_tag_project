@@ -30,7 +30,7 @@ apriltag_detector:
 velocity_mapper_node:
   ros__parameters:
     urdf_path: ""
-    end_effector_frame: "fr3_hand_tcp"
+    end_effector_frame: "fr3_link8"
 
     T_end_effector_camera: [
       0.685367986922,  0.727986036940,  0.017522914211, -0.0495,
