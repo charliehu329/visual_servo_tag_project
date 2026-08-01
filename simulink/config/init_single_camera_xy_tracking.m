@@ -68,10 +68,6 @@ controller_parameters = [ ...
     double(controller_enable);
     ekf_reset_timeout_sec];
 
-% Compatibility aliases used only by the existing plotting script.
-gamma_x = gamma_adapt;
-gamma_y = gamma_adapt;
-v_adapt_max = adapt_max;
 
 
 %% FR3相机速度反馈运动学模型
