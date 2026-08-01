@@ -1,9 +1,9 @@
-%% save_single_camera_base_kf_tuning_results.m
+%% save_single_camera_test_results.m
 % 单目XY视觉伺服：Base坐标系KF调参数据保存与可视化脚本
 %
 % 当前模型约定：
 % - z_meas = [X_C;Y_C]，属于相机坐标系；
-% - ekf_state = [X_B;Y_B;Vx_B;Vy_B;Ax_B;Ay_B]，属于机器人Base坐标系；
+% - ekf_state = [X_B;Y_B;Vx_B;Vy_B]，属于机器人Base坐标系；
 % - v_p、v_ff、v_issued属于相机坐标系。
 %
 % 使用方法：
@@ -24,7 +24,7 @@
 % 本脚本会：
 % - 保存完整日志、参数和指标；
 % - 单独导出ekf_state_timeseries.csv；
-% - 绘制完整六状态[X_B,Y_B,Vx_B,Vy_B,Ax_B,Ay_B]；
+% - 绘制完整四状态[X_B,Y_B,Vx_B,Vy_B]；
 % - 绘制状态不确定度、NIS、控制器分量和状态信号；
 % - 生成summary.txt。
 
@@ -109,7 +109,7 @@ end
 %
 % 当前模型核心日志：
 % log_z_meas：相机坐标系XY测量；
-% log_ekf_state：Base坐标系六状态；
+% log_ekf_state：Base坐标系四状态；
 % log_ekf_velocity：Base坐标系目标XY速度；
 % log_v_p、log_v_ff、log_v_issued：相机坐标系控制速度。
 
@@ -129,6 +129,7 @@ requestedLogs = { ...
     'log_camera_velocity', ...
     'log_innovation_nis', ...
     'log_measurement_is_new', ...
+    'log_target_is_new', ...
     'log_measurement_accepted', ...
     'log_safe_valid', ...
     'log_controller_ok', ...
@@ -159,6 +160,14 @@ if ~isfield(logs,'log_error') && isfield(logs,'log_e')
     logs.log_error = logs.log_e;
     missingLogs(strcmp(missingLogs,'log_error')) = [];
 end
+
+% 兼容新旧的新帧日志名称。
+if ~isfield(logs,'log_measurement_is_new') && isfield(logs,'log_target_is_new')
+    logs.log_measurement_is_new = logs.log_target_is_new;
+    missingLogs(strcmp(missingLogs,'log_measurement_is_new')) = [];
+end
+
+missingLogs(strcmp(missingLogs,'log_target_is_new')) = [];
 
 availableLogNames = fieldnames(logs);
 
@@ -196,7 +205,9 @@ parameterNames = { ...
     'Q_ekf', ...
     'R_ekf', ...
     'ekf_gate_threshold', ...
-    'ekf_reset_timeout_sec', ...
+    'required_valid_frames', ...
+    'measurement_reset_timeout', ...
+    'ff_filter_tau', ...
     'target_timeout_sec', ...
     'joint_state_timeout_sec', ...
     'camera_velocity_feedback_timeout_sec', ...
@@ -233,20 +244,18 @@ if saveCompleteSimulationOutput && ~isempty(simulationOutput)
         'simulationOutput','-v7.3');
 end
 
-% 单独导出完整六状态，便于Origin、Excel或后续MATLAB分析。
+% 单独导出完整四状态，便于Origin、Excel或后续MATLAB分析。
 if isfield(logs,'log_ekf_state')
     [stateTime,stateData] = signalToTimeData(logs.log_ekf_state);
 
-    if size(stateData,2) >= 6
+    if size(stateData,2) >= 4
         stateTable = table( ...
             stateTime, ...
             stateData(:,1),stateData(:,2), ...
             stateData(:,3),stateData(:,4), ...
-            stateData(:,5),stateData(:,6), ...
             'VariableNames',{ ...
                 'time_s','X_B_m','Y_B_m', ...
-                'Vx_B_mps','Vy_B_mps', ...
-                'Ax_B_mps2','Ay_B_mps2'});
+                'Vx_B_mps','Vy_B_mps'});
 
         writetable(stateTable,fullfile(runFolder,'ekf_state_timeseries.csv'));
     end
@@ -338,14 +347,14 @@ if isfield(logs,'log_z_meas')
 end
 
 % ---------------------------------------------------------
-% 图3：完整EKF六状态输出（Base坐标系）
+% 图3：完整KF四状态输出（Base坐标系）
 % ---------------------------------------------------------
 if isfield(logs,'log_ekf_state')
     [time,stateData] = signalToTimeData(logs.log_ekf_state);
 
-    if size(stateData,2) >= 6
+    if size(stateData,2) >= 4
         fig = figure('Visible',visibilityValue,'Name','Base-frame KF State');
-        tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+        tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
 
         nexttile;
         plot(time,stateData(:,1:2),'LineWidth',1.15);
@@ -364,15 +373,6 @@ if isfield(logs,'log_ekf_state')
         legend({'\hat V_{x,B}','\hat V_{y,B}'},'Location','best');
         title('KF Velocity State in Base Frame');
 
-        nexttile;
-        plot(time,stateData(:,5:6),'LineWidth',1.15);
-        yline(0,':');
-        grid on;
-        xlabel('Time (s)');
-        ylabel('Acceleration (m/s^2)');
-        legend({'\hat A_{x,B}','\hat A_{y,B}'},'Location','best');
-        title('KF Acceleration State in Base Frame');
-
         saveTestFigure(fig,figureFolder,'03_ekf_state_base_frame');
         createdFigures{end+1} = '03_ekf_state_base_frame'; %#ok<SAGROW>
         if closeFiguresAfterSave, close(fig); end
@@ -380,14 +380,14 @@ if isfield(logs,'log_ekf_state')
 end
 
 % ---------------------------------------------------------
-% 图4：EKF状态标准差
+% 图4：KF状态标准差
 % ---------------------------------------------------------
 if isfield(logs,'log_ekf_covariance')
-    [time,pDiag] = covarianceToDiagonal(logs.log_ekf_covariance,6);
+    [time,pDiag] = covarianceToDiagonal(logs.log_ekf_covariance,4);
     stateSigma = sqrt(max(pDiag,0));
 
     fig = figure('Visible',visibilityValue,'Name','KF State Uncertainty');
-    tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+    tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
 
     nexttile;
     plot(time,stateSigma(:,1:2),'LineWidth',1.1);
@@ -404,14 +404,6 @@ if isfield(logs,'log_ekf_covariance')
     ylabel('\sigma_v (m/s)');
     legend({'\sigma_{Vx_B}','\sigma_{Vy_B}'},'Location','best');
     title('Velocity Standard Deviation');
-
-    nexttile;
-    plot(time,stateSigma(:,5:6),'LineWidth',1.1);
-    grid on;
-    xlabel('Time (s)');
-    ylabel('\sigma_a (m/s^2)');
-    legend({'\sigma_{Ax_B}','\sigma_{Ay_B}'},'Location','best');
-    title('Acceleration Standard Deviation');
 
     saveTestFigure(fig,figureFolder,'04_ekf_state_uncertainty');
     createdFigures{end+1} = '04_ekf_state_uncertainty'; %#ok<SAGROW>
@@ -816,7 +808,7 @@ fprintf('日志、参数与指标：%s\n', ...
     fullfile(runFolder,'selected_logs_parameters_metrics.mat'));
 
 if isfield(logs,'log_ekf_state')
-    fprintf('EKF六状态CSV：%s\n', ...
+    fprintf('KF四状态CSV：%s\n', ...
         fullfile(runFolder,'ekf_state_timeseries.csv'));
 end
 
@@ -1034,8 +1026,8 @@ if isfield(parameters,'controller_parameters')
     vector = double(parameters.controller_parameters(:));
     metrics.parameterVector.available = true;
     metrics.parameterVector.length = numel(vector);
-    metrics.parameterVector.expectedLength = 10;
-    metrics.parameterVector.lengthCorrect = numel(vector) == 10;
+    metrics.parameterVector.expectedLength = 12;
+    metrics.parameterVector.lengthCorrect = numel(vector) == 12;
 end
 
 % 图像误差。
@@ -1136,17 +1128,17 @@ if isfield(logs,'log_innovation_nis')
     end
 end
 
-% 完整六状态指标。
+% 完整四状态指标。
 metrics.ekfState = struct('available',false);
 if isfield(logs,'log_ekf_state')
     [time,stateData] = signalToTimeData(logs.log_ekf_state);
 
-    if size(stateData,2)>=6
+    if size(stateData,2)>=4
         mask = time >= time(1)+options.analysisStartSec & ...
-            all(isfinite(stateData(:,1:6)),2);
+            all(isfinite(stateData(:,1:4)),2);
 
         if any(mask)
-            selected = stateData(mask,1:6);
+            selected = stateData(mask,1:4);
             metrics.ekfState.available = true;
             metrics.ekfState.mean = mean(selected,1,'omitnan');
             metrics.ekfState.rms = sqrt(mean(selected.^2,1,'omitnan'));
@@ -1156,8 +1148,6 @@ if isfield(logs,'log_ekf_state')
                 sqrt(mean(selected(:,1:2).^2,1,'omitnan'));
             metrics.ekfState.velocityRms = ...
                 sqrt(mean(selected(:,3:4).^2,1,'omitnan'));
-            metrics.ekfState.accelerationRms = ...
-                sqrt(mean(selected(:,5:6).^2,1,'omitnan'));
         end
     end
 end
@@ -1230,7 +1220,7 @@ end
 % 协方差指标。
 metrics.covariance = struct('available',false);
 if isfield(logs,'log_ekf_covariance')
-    [time,pDiag] = covarianceToDiagonal(logs.log_ekf_covariance,6);
+    [time,pDiag] = covarianceToDiagonal(logs.log_ekf_covariance,4);
     mask = time >= time(1)+options.analysisStartSec & all(isfinite(pDiag),2);
 
     if any(mask)
@@ -1357,7 +1347,7 @@ fprintf(fileID,'Analysis start offset: %.3f s\n\n',metrics.analysisStartSec);
 fprintf(fileID,'Coordinate conventions\n');
 fprintf(fileID,'----------------------\n');
 fprintf(fileID,'z_meas: [X_C,Y_C], camera frame.\n');
-fprintf(fileID,'ekf_state: [X_B,Y_B,Vx_B,Vy_B,Ax_B,Ay_B], Base frame.\n');
+fprintf(fileID,'ekf_state: [X_B,Y_B,Vx_B,Vy_B], Base frame.\n');
 fprintf(fileID,'v_p, v_ff, v_issued: camera frame.\n\n');
 
 fprintf(fileID,'Available logs: %s\n',strjoin(fieldnames(logs),', '));
@@ -1371,7 +1361,8 @@ fprintf(fileID,'Controller and KF parameters\n');
 fprintf(fileID,'----------------------------\n');
 
 scalarNames = {'Ts','fx','fy','cx','cy','Z_hat','Kpx','Kpy','k_ff', ...
-    'ekf_gate_threshold','ekf_reset_timeout_sec','target_timeout_sec', ...
+    'ekf_gate_threshold','required_valid_frames','measurement_reset_timeout', ...
+    'ff_filter_tau','target_timeout_sec', ...
     'joint_state_timeout_sec','camera_velocity_feedback_timeout_sec'};
 
 for index = 1:numel(scalarNames)
@@ -1395,8 +1386,8 @@ if metrics.parameterVector.available
     fprintf(fileID,'Expected current length: %d\n', ...
         metrics.parameterVector.expectedLength);
     if ~metrics.parameterVector.lengthCorrect
-        fprintf(fileID,['WARNING: current KF function expects the 10-entry order ' ...
-            '[Ts,Z,Kpx,Kpy,k_ff,gate,enable_p,enable_ff,controller_enable,reset_timeout].\n']);
+        fprintf(fileID,['WARNING: controller_parameters must contain 12 entries: ' ...
+            '[Ts,Z,Kpx,Kpy,k_ff,gate,enable_p,enable_ff,controller_enable,reserved,v_xy_max,a_xy_max].\n']);
     end
 end
 
@@ -1442,16 +1433,14 @@ if metrics.imageError.available
 end
 
 if metrics.ekfState.available
-    fprintf(fileID,'\nBase-frame EKF state [X_B Y_B Vx_B Vy_B Ax_B Ay_B]\n');
-    fprintf(fileID,'---------------------------------------------------\n');
+    fprintf(fileID,'\nBase-frame KF state [X_B Y_B Vx_B Vy_B]\n');
+    fprintf(fileID,'-----------------------------------------\n');
     writeVector(fileID,'State mean',metrics.ekfState.mean);
     writeVector(fileID,'State RMS',metrics.ekfState.rms);
     writeVector(fileID,'State max abs',metrics.ekfState.maxAbs);
     writeVector(fileID,'Final state',metrics.ekfState.final);
     writeVector(fileID,'Position RMS (m)',metrics.ekfState.positionRms);
     writeVector(fileID,'Velocity RMS (m/s)',metrics.ekfState.velocityRms);
-    writeVector(fileID,'Acceleration RMS (m/s^2)', ...
-        metrics.ekfState.accelerationRms);
 end
 
 if metrics.stateVelocityConsistency.available
@@ -1506,13 +1495,13 @@ fprintf(fileID,'--------------------------\n');
 
 switch testType
     case 'static'
-        fprintf(fileID,['1. Robot and target are stationary: Vx_B,Vy_B,Ax_B,Ay_B should approach zero.\n' ...
+        fprintf(fileID,['1. Robot and target are stationary: Vx_B,Vy_B should approach zero.\n' ...
             '2. Use static z_meas covariance as the camera-frame R_ekf initial estimate.\n' ...
             '3. NIS should mostly stay below the gate.\n']);
     case 'moving_target'
         fprintf(fileID,['1. Observe whether Base-frame velocity follows direction changes without excessive spikes.\n' ...
             '2. Smooth but delayed velocity suggests Q is too small.\n' ...
-            '3. Noisy velocity/acceleration suggests Q is too large or R is too small.\n']);
+            '3. Noisy velocity suggests Q is too large or R is too small.\n']);
     case 'moving_camera'
         fprintf(fileID,['1. With a fixed target, Base-frame Vx_B,Vy_B should remain near zero while the robot moves.\n' ...
             '2. Motion-correlated drift points first to T_camera2base direction, timing, Z_hat, or hand-eye calibration.\n' ...
@@ -1521,7 +1510,7 @@ switch testType
         fprintf(fileID,['1. Compare feedforward off/on tests using image-error RMS and issued-speed RMS.\n' ...
             '2. v_ff is useful only when tracking error improves without state spikes.\n']);
     otherwise
-        fprintf(fileID,['Use the full six-state, covariance, NIS, status and controller plots to separate ' ...
+        fprintf(fileID,['Use the four-state, covariance, NIS, status and controller plots to separate ' ...
             'coordinate-transform, measurement-noise, model and controller problems.\n']);
 end
 
