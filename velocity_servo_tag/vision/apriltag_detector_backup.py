@@ -35,14 +35,6 @@ apriltag_detector.py
         uv_filter_alpha：
             标签中心低通滤波系数，范围 (0, 1]。
             1.0 表示不进行时间滤波。
-        camera_fx、camera_fy、camera_cx、camera_cy：
-            相机内参，单位 pixel。
-        tag_size_m：
-            AprilTag 检测角点之间的实际边长，单位 m。
-        depth_filter_alpha：
-            深度一阶低通滤波系数，范围 (0, 1]。
-        depth_min_m、depth_max_m：
-            可接受的深度范围，单位 m。
         target_position_topic：
             检测结果发布 topic。
         show_window：
@@ -56,14 +48,12 @@ apriltag_detector.py
         std_msgs/msg/Float64MultiArray
 
     数据顺序：
-        [valid, u, v, depth_m]
+        [valid, u, v]
 
         valid：
             1.0 表示检测有效，0.0 表示未检测到目标。
         u、v：
             标签中心的像素坐标，单位 pixel。
-        depth_m：
-            AprilTag 中心相对于相机光心的 Z 方向深度，单位 m。
 
 接口：
     AprilTagDetector.detect(image)
@@ -121,14 +111,6 @@ class AprilTagDetector:
         refine_edges=True,
         decode_sharpening=0.25,
         uv_filter_alpha=0.4,
-        camera_fx=1.0,
-        camera_fy=1.0,
-        camera_cx=0.0,
-        camera_cy=0.0,
-        tag_size_m=0.12,
-        depth_filter_alpha=0.4,
-        depth_min_m=0.05,
-        depth_max_m=5.0,
     ):
         """
         初始化 AprilTag 检测参数。
@@ -154,18 +136,6 @@ class AprilTagDetector:
         self.uv_filter_alpha = float(
             uv_filter_alpha
         )
-        self.camera_params = (
-            float(camera_fx),
-            float(camera_fy),
-            float(camera_cx),
-            float(camera_cy),
-        )
-        self.tag_size_m = float(tag_size_m)
-        self.depth_filter_alpha = float(
-            depth_filter_alpha
-        )
-        self.depth_min_m = float(depth_min_m)
-        self.depth_max_m = float(depth_max_m)
 
         self.validate_parameters()
 
@@ -185,8 +155,6 @@ class AprilTagDetector:
         self.last_corners = None
         self.last_raw_center = None
         self.last_filtered_center = None
-        self.last_raw_depth = None
-        self.last_filtered_depth = None
 
     def validate_parameters(self):
         """
@@ -228,27 +196,6 @@ class AprilTagDetector:
                 "uv_filter_alpha 必须在 (0, 1] 范围内。"
             )
 
-        if not all(np.isfinite(self.camera_params)):
-            raise ValueError("相机内参必须为有限数值。")
-
-        if self.camera_params[0] <= 0.0 or self.camera_params[1] <= 0.0:
-            raise ValueError("camera_fx 和 camera_fy 必须大于 0。")
-
-        if self.tag_size_m <= 0.0:
-            raise ValueError("tag_size_m 必须大于 0。")
-
-        if not 0.0 < self.depth_filter_alpha <= 1.0:
-            raise ValueError(
-                "depth_filter_alpha 必须在 (0, 1] 范围内。"
-            )
-
-        if not (
-            0.0 < self.depth_min_m < self.depth_max_m
-        ):
-            raise ValueError(
-                "depth_min_m 和 depth_max_m 范围不合法。"
-            )
-
     def reset_tracking_state(self):
         """
         清除目标丢失前保存的检测和滤波状态。
@@ -257,26 +204,6 @@ class AprilTagDetector:
         self.last_corners = None
         self.last_raw_center = None
         self.last_filtered_center = None
-        self.last_raw_depth = None
-        self.last_filtered_depth = None
-
-    def filter_depth(self, raw_depth):
-        """对 AprilTag 深度进行一阶低通滤波。"""
-
-        raw_depth = float(raw_depth)
-
-        if self.last_filtered_depth is None:
-            filtered_depth = raw_depth
-        else:
-            alpha = self.depth_filter_alpha
-            filtered_depth = (
-                alpha * raw_depth +
-                (1.0 - alpha) * self.last_filtered_depth
-            )
-
-        self.last_raw_depth = raw_depth
-        self.last_filtered_depth = filtered_depth
-        return float(filtered_depth)
 
     def filter_center(
         self,
@@ -313,7 +240,7 @@ class AprilTagDetector:
         """
         检测 RGB 图像中的指定 AprilTag。
 
-        检测成功时返回 [u, v, depth_m]，失败时返回 None。
+        检测成功时返回 [u, v]，失败时返回 None。
         """
 
         if image is None:
@@ -340,9 +267,7 @@ class AprilTagDetector:
 
         detections = self.detector.detect(
             gray_image,
-            estimate_tag_pose=True,
-            camera_params=self.camera_params,
-            tag_size=self.tag_size_m,
+            estimate_tag_pose=False
         )
 
         target_detections = [
@@ -374,25 +299,12 @@ class AprilTagDetector:
             target.corners,
             dtype=float
         )
-        pose_t = np.asarray(
-            target.pose_t,
-            dtype=float
-        ).reshape(-1)
 
         if (
             raw_center.shape != (2,) or
             corners.shape != (4, 2) or
-            pose_t.size < 3 or
             not np.all(np.isfinite(raw_center)) or
-            not np.all(np.isfinite(corners)) or
-            not np.all(np.isfinite(pose_t[:3]))
-        ):
-            self.reset_tracking_state()
-            return None
-
-        raw_depth = float(pose_t[2])
-        if not (
-            self.depth_min_m <= raw_depth <= self.depth_max_m
+            not np.all(np.isfinite(corners))
         ):
             self.reset_tracking_state()
             return None
@@ -400,7 +312,6 @@ class AprilTagDetector:
         filtered_center = self.filter_center(
             raw_center
         )
-        filtered_depth = self.filter_depth(raw_depth)
 
         self.last_raw_center = raw_center.copy()
         self.last_corners = corners.copy()
@@ -409,7 +320,6 @@ class AprilTagDetector:
             [
                 float(filtered_center[0]),
                 float(filtered_center[1]),
-                float(filtered_depth),
             ],
             dtype=float
         )
@@ -453,15 +363,6 @@ class AprilTagDetectorNode(Node):
             0.25
         )
         self.declare_parameter("uv_filter_alpha", 0.4)
-
-        self.declare_parameter("camera_fx", 2057.0)
-        self.declare_parameter("camera_fy", 2054.0)
-        self.declare_parameter("camera_cx", 1000.0)
-        self.declare_parameter("camera_cy", 592.0)
-        self.declare_parameter("tag_size_m", 0.12)
-        self.declare_parameter("depth_filter_alpha", 0.4)
-        self.declare_parameter("depth_min_m", 0.25)
-        self.declare_parameter("depth_max_m", 0.80)
 
         self.declare_parameter(
             "target_position_topic",
@@ -536,31 +437,6 @@ class AprilTagDetectorNode(Node):
             ).value
         )
 
-        self.camera_fx = float(
-            self.get_parameter("camera_fx").value
-        )
-        self.camera_fy = float(
-            self.get_parameter("camera_fy").value
-        )
-        self.camera_cx = float(
-            self.get_parameter("camera_cx").value
-        )
-        self.camera_cy = float(
-            self.get_parameter("camera_cy").value
-        )
-        self.tag_size_m = float(
-            self.get_parameter("tag_size_m").value
-        )
-        self.depth_filter_alpha = float(
-            self.get_parameter("depth_filter_alpha").value
-        )
-        self.depth_min_m = float(
-            self.get_parameter("depth_min_m").value
-        )
-        self.depth_max_m = float(
-            self.get_parameter("depth_max_m").value
-        )
-
         self.target_position_topic = str(
             self.get_parameter(
                 "target_position_topic"
@@ -589,14 +465,6 @@ class AprilTagDetectorNode(Node):
                 self.decode_sharpening
             ),
             uv_filter_alpha=self.uv_filter_alpha,
-            camera_fx=self.camera_fx,
-            camera_fy=self.camera_fy,
-            camera_cx=self.camera_cx,
-            camera_cy=self.camera_cy,
-            tag_size_m=self.tag_size_m,
-            depth_filter_alpha=self.depth_filter_alpha,
-            depth_min_m=self.depth_min_m,
-            depth_max_m=self.depth_max_m,
         )
 
         self.camera = USBCamera(
@@ -639,7 +507,6 @@ class AprilTagDetectorNode(Node):
             f"{self.camera_height}@{self.camera_fps:.1f} Hz, "
             f"family={self.tag_family}, "
             f"target_id={self.target_tag_id}, "
-            f"tag_size={self.tag_size_m:.4f} m, "
             f"topic={self.target_position_topic}."
         )
 
@@ -669,20 +536,6 @@ class AprilTagDetectorNode(Node):
                 "camera_fps 必须大于 0。"
             )
 
-        if self.camera_fx <= 0.0 or self.camera_fy <= 0.0:
-            raise ValueError("camera_fx 和 camera_fy 必须大于 0。")
-
-        if self.tag_size_m <= 0.0:
-            raise ValueError("tag_size_m 必须大于 0。")
-
-        if not 0.0 < self.depth_filter_alpha <= 1.0:
-            raise ValueError(
-                "depth_filter_alpha 必须在 (0, 1] 范围内。"
-            )
-
-        if not 0.0 < self.depth_min_m < self.depth_max_m:
-            raise ValueError("深度范围参数不合法。")
-
         if not self.target_position_topic:
             raise ValueError(
                 "target_position_topic 不能为空。"
@@ -693,7 +546,7 @@ class AprilTagDetectorNode(Node):
         feature
     ):
         """
-        发布一次有效的 AprilTag 中心位置和深度。
+        发布一次有效的 AprilTag 中心位置。
         """
 
         message = Float64MultiArray()
@@ -701,7 +554,6 @@ class AprilTagDetectorNode(Node):
             1.0,
             float(feature[0]),
             float(feature[1]),
-            float(feature[2]),
         ]
 
         self.position_publisher.publish(
@@ -715,7 +567,6 @@ class AprilTagDetectorNode(Node):
 
         message = Float64MultiArray()
         message.data = [
-            0.0,
             0.0,
             0.0,
             0.0,
@@ -795,8 +646,7 @@ class AprilTagDetectorNode(Node):
                 (
                     f"id={self.target_tag_id}, "
                     f"u={feature[0]:.1f}, "
-                    f"v={feature[1]:.1f}, "
-                    f"z={feature[2]:.3f} m"
+                    f"v={feature[1]:.1f}"
                 ),
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -907,10 +757,8 @@ class AprilTagDetectorNode(Node):
 
                 if delta_time > 0.0:
                     self.last_pixel_velocity = (
-                        (
-                            feature[:2] -
-                            self.last_detection_feature[:2]
-                        ) / delta_time
+                        (feature - self.last_detection_feature) /
+                        delta_time
                     )
                 else:
                     self.last_pixel_velocity = None

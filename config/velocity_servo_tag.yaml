@@ -19,9 +19,18 @@ apriltag_detector:
     refine_edges: true
     decode_sharpening: 0.25
 
-    # 一阶低通滤波系数：
-    # 1.0表示不滤波，数值越小越平滑。
     uv_filter_alpha: 1.0
+
+    camera_fx: 2057.0
+    camera_fy: 2054.0
+    camera_cx: 1000.0
+    camera_cy: 592.0
+
+    tag_size_m: 0.12
+
+    depth_filter_alpha: 0.4
+    depth_min_m: 0.25
+    depth_max_m: 0.80
 
     target_position_topic: "/apriltag_detector/target_position"
     show_window: true
