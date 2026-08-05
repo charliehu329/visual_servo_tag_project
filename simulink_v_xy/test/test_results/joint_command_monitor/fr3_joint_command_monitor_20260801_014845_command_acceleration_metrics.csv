@@ -1,0 +1,8 @@
+Joint,AccelerationLimitRadPerSec2,FinalAccelerationRadPerSec2,PeakAbsAccelerationRadPerSec2,MaximumAccelerationUsagePercent
+1,0.5,0,1.5,300.000000000001
+2,0.5,0,1.4996605,299.9321
+3,0.5,0,1.5,300.000000000001
+4,0.5,0,1.5,300.000000000001
+5,0.5,0,1.5,300.000000000001
+6,0.5,0,1.5,300
+7,0.5,0,1.5,300.000000000001

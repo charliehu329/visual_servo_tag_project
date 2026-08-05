@@ -1,0 +1,106 @@
+Single-camera XY EKF tuning test summary
+========================================
+Test name: single_camera_ekf_test
+Test type: generic
+Timestamp: 20260731_214535
+Analysis start offset: 1.000 s
+
+Available logs: log_z_meas, log_error, log_e, log_ekf_state, log_ekf_covariance, log_ekf_velocity, log_v_p, log_v_ff, log_v_adapt, log_v_norm_limited, log_v_issued, log_camera_velocity, log_v_camera_measured, log_v_camera_measured_valid, log_innovation_nis, log_measurement_is_new, log_measurement_accepted, log_saturation, log_acceleration_limit, log_safe_valid, log_controller_ok, log_ekf_initialized, log_u, log_v, log_joint_position, log_joint_velocity
+Missing logs: none
+
+Controller and EKF parameters
+-----------------------------
+Ts: 0.01
+fx: 2057
+fy: 2054
+cx: 1000
+cy: 592
+Z_hat: 1
+Kpx: 1
+Kpy: 1
+k_ff: 0.5
+gamma_adapt: 0
+sigma_adapt: 0
+adapt_max: 0
+v_xy_max: 2
+a_xy_max: 2
+ekf_gate_threshold: 5.991
+ekf_reset_timeout_sec: 0.5
+target_timeout_sec: 0.2
+joint_state_timeout_sec: 0.1
+camera_velocity_feedback_timeout_sec: 0.5
+P0:
+ 0.0025 0 0 0 0 0
+ 0 0.0025 0 0 0 0
+ 0 0 0.04 0 0 0
+ 0 0 0 0.04 0 0
+ 0 0 0 0 0.25 0
+ 0 0 0 0 0 0.25
+Q_ekf:
+ 1e-12 0 0 0 0 0
+ 0 1e-12 0 0 0 0
+ 0 0 1e-12 0 0 0
+ 0 0 0 1e-12 0 0
+ 0 0 0 0 0.0001 0
+ 0 0 0 0 0 0.0001
+R_ekf:
+ 1e-08 0
+ 0 1e-08
+
+Measured indicators
+-------------------
+Test duration: 11.830000 s
+New frame count: 491
+Valid new frame count: 491
+Accepted new frame count: 491
+New frame rate: 45.337027 Hz
+Measurement acceptance ratio among valid new frames: 100.000000 %
+NIS sample count: 491
+NIS mean: 8.10144626174e-08
+NIS median: 4.05273953392e-08
+NIS 95th percentile: 3.133392242e-07
+NIS 99th percentile: 6.3077619131e-07
+NIS gate: 5.991
+NIS gate exceedance: 0.000000 %
+Image error RMS normalized: 0.161203151088 0.0756300717522
+Image error max abs normalized: 0.161282464445 0.0759003131509
+Image error RMS pixels: 331.594881788 155.344167379
+Image error max abs pixels: 331.758029364 155.899243212
+EKF velocity mean: 1.69057587089e-05 -1.91164560052e-05
+EKF velocity RMS: 8.82841994609e-05 9.14807039265e-05
+EKF velocity 95th percentile abs: 0.000167497767594 0.000198043680728
+EKF velocity max abs: 0.000194728517349 0.000235250227243
+Measured camera velocity RMS (m/s): 0.000713549263428 0.000475272546671
+Measured camera velocity max abs (m/s): 0.00282283896511 0.00165361801954
+Camera velocity feedback valid ratio: 100.000000 %
+Mean EKF state sigma: 0.0910388716368 0.0910388716368 0.188650959524 0.188650959524 0.159398113605 0.159398113605
+Final EKF state sigma: 0.0881081563416 0.0881081563416 0.176565919117 0.176565919117 0.144945627555 0.144945627555
+Maximum EKF state sigma: 0.106355079425 0.106355079425 0.298636054934 0.298636054934 0.371959733605 0.371959733605
+Maximum issued XY speed: 0.36096967105 m/s
+RMS issued XY speed: 0.360512199759 m/s
+Velocity saturation ratio: 0.000000 %
+Acceleration limit ratio: 0.000000 %
+RMS(v_ff)/RMS(v_p): 0.000176320974803
+
+Offline velocity comparison
+---------------------------
+Velocity comparison RMSE (m/s): 0.000743641652976 0.000670516418902
+Velocity comparison MAE (m/s): 0.000597147155159 0.000512471314632
+Reference is computed from smoothed z_meas derivative plus measured camera velocity; it is not ground truth.
+
+How to interpret this test
+--------------------------
+Use the NIS, velocity, covariance, camera feedback and controller plots to identify whether the problem comes from measurement noise, motion model, camera compensation or controller gains.
+
+Created figures
+---------------
+01_image_error_normalized_and_pixels
+02_measurement_and_ekf_position
+03_ekf_velocity_with_uncertainty
+04_camera_velocity_feedback
+05_nis_time_and_distribution
+06_measurement_and_status_states
+07_ekf_state_standard_deviation
+08_controller_components_xy
+09_controller_limits
+11_velocity_reference_vs_ekf

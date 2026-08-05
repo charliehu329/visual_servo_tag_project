@@ -116,6 +116,11 @@ singularity_sigma_stop = 0.025;
 singularity_sigma_warn = 0.080;
 
 
+% sigma_min ≤ singularity_sigma_stop     完全停止
+% singularity_sigma_stop～singularity_sigma_warn         平滑降速
+% sigma_min ≥ singularity_sigma_warn     正常速度
+
+
 %% 7. 零空间关节姿态与深度安全区
 
 % 零空间关节中心回避增益。
@@ -138,9 +143,11 @@ visual_min_depth = 0.10;
 
 % 最终关节速度的一阶低通时间常数，单位：s。
 % 设为 0 可关闭低通滤波。
+% 最终7维关节速度的一阶低通滤波时间常数，用于减少速度突变和抖动。越大：越平滑，但响应越慢；
 joint_command_filter_tau = 0.040;
 
 % 接近建议关节位置边界时的整体降速距离，单位：rad。
+% 关节位置边界大于 0.15 rad：正常速度；
 joint_soft_margin = 0.15;
 
 % 零空间任务使用的名义关节构型，单位：rad。
@@ -207,20 +214,8 @@ joint_acceleration_limit = 1.50 * ones(7,1);
 % 一个重复向量，避免以后再次出现 10 维与 12 维接口不一致的问题。
 
 
-%% 10. 离线测试参数
 
-% 下列参数保留原初始化文件的离线测试风格。
-% ROS 真机模式下不会改变最终 JointVelocityController 的命令保护。
-Z0 = Z_hat;
-X0 = 0.45;
-Y0 = -0.25;
-
-pixel_noise_std = 0.8;
-random_seed_x = 1207;
-random_seed_y = 9053;
-
-
-%% 11. 导入 FR3 运动学模型
+%% 10. 导入 FR3 运动学模型
 
 % 按当前项目目录结构定位 URDF：
 % 当前初始化脚本目录/../../config/urdf/fr3.urdf
@@ -254,7 +249,7 @@ assert(ismember('fr3_link8', fr3_camera_robot.BodyNames), ...
     'URDF 中不存在父坐标系 fr3_link8。');
 
 
-%% 12. 添加手眼标定得到的相机光学坐标系
+%% 11. 添加手眼标定得到的相机光学坐标系
 
 % T_link8_camera = ^{link8}T_{camera}
 % 含义：把相机光学坐标系中的点转换到 fr3_link8 坐标系：
@@ -293,7 +288,7 @@ addBody( ...
     'fr3_link8');
 
 
-%% 13. 初始化结果检查
+%% 12. 初始化结果检查
 
 assert(Ts > 0.0, 'Ts 必须大于 0。');
 assert(Z_hat > visual_min_depth, ...

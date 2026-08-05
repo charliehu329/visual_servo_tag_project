@@ -1,0 +1,47 @@
+Single-camera XY tracking test summary
+======================================
+Test name: single_camera_base_kf_test
+Timestamp: 0801_211846
+
+Available logs: log_error, log_ekf_velocity, log_v_p, log_v_ff, log_v_norm_limited, log_v_issued, log_camera_velocity, log_innovation_nis, log_measurement_accepted, log_safe_valid, log_controller_ok, log_ekf_initialized, log_u, log_v, log_joint_position, log_joint_velocity
+Missing logs: log_v_adapt, log_saturation, log_acceleration_limit
+
+Controller parameters
+---------------------
+Ts: 0.01
+fx: 2057
+fy: 2054
+cx: 1000
+cy: 592
+Z_hat: 0.5
+Kpx: 1
+Kpy: 1
+k_ff: 0.5
+v_xy_max: 2
+a_xy_max: 2
+ekf_gate_threshold: 5.991
+target_timeout_sec: 1
+joint_state_timeout_sec: 0.5
+
+Measured indicators
+-------------------
+Test duration: 19.400 s
+Error channel 1 RMS: 0.352153051
+Error channel 1 max abs: 0.486144871
+Error channel 2 RMS: 0.209408501
+Error channel 2 max abs: 0.288218111
+EKF velocity channel 1 mean abs: 0.00635108709 m/s
+EKF velocity channel 1 max abs: 0.0605603724 m/s
+EKF velocity channel 2 mean abs: 0.0171404388 m/s
+EKF velocity channel 2 max abs: 0.106566534 m/s
+Maximum issued XY speed: 0.0772737132 m/s
+Measurement acceptance ratio: 40.443 %
+NIS median: 0.263389775
+NIS 95th percentile: 14.7082746
+
+Created figures
+---------------
+01_normalized_image_error
+02_ekf_target_velocity
+05_ekf_nis_and_acceptance
+07_validity_and_controller_status

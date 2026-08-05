@@ -1,0 +1,105 @@
+Single-camera Base-frame KF tuning test summary
+================================================
+Test name: single_camera_base_kf_test
+Test type: generic
+Timestamp: 0801_211823
+Analysis start offset: 1.000 s
+
+Coordinate conventions
+----------------------
+z_meas: [X_C,Y_C], camera frame.
+ekf_state: [X_B,Y_B,Vx_B,Vy_B], Base frame.
+v_p, v_ff, v_issued: camera frame.
+
+Available logs: log_z_meas, log_error, log_e, log_ekf_state, log_ekf_covariance, log_ekf_velocity, log_v_p, log_v_ff, log_v_issued, log_v_norm_limited, log_saturation_active, log_acceleration_active, log_camera_velocity, log_innovation_nis, log_target_is_new, log_measurement_accepted, log_safe_valid, log_controller_ok, log_ekf_initialized, log_v_camera_measured, log_v_camera_measured_valid, log_u, log_v, log_joint_position, log_joint_velocity, log_measurement_is_new
+Missing logs: none
+
+Controller and KF parameters
+----------------------------
+Ts: 0.01
+fx: 2057
+fy: 2054
+cx: 1000
+cy: 592
+Z_hat: 0.5
+Kpx: 1
+Kpy: 1
+k_ff: 0.5
+ekf_gate_threshold: 5.991
+required_valid_frames: 5
+measurement_reset_timeout: 2
+ff_filter_tau: 0.2
+target_timeout_sec: 1
+joint_state_timeout_sec: 0.5
+camera_velocity_feedback_timeout_sec: 0.5
+P0:
+ 0.0025 0 0 0
+ 0 0.0025 0 0
+ 0 0 0.04 0
+ 0 0 0 0.04
+Q_ekf:
+ 2.5e-09 0 5e-07 0
+ 0 2.5e-09 0 5e-07
+ 5e-07 0 0.0001 0
+ 0 5e-07 0 0.0001
+R_ekf:
+ 1e-08 0
+ 0 1e-08
+controller_parameters length: 12
+Expected current length: 12
+
+Measured indicators
+-------------------
+Test duration: 19.400000 s
+New frame count: 914
+Valid new frame count: 914
+Accepted new frame count: 741
+New frame rate: 49.673913 Hz
+Measurement acceptance ratio: 81.072210 %
+NIS sample count: 914
+NIS mean: 3.85399521064
+NIS median: 0.334521283377
+NIS 95th percentile: 15.0916756981
+NIS 99th percentile: 43.7440284635
+NIS gate: 5.991
+NIS gate exceedance: 18.927790 %
+Image error RMS normalized: 0.351044523841 0.208942503822
+Image error max abs normalized: 0.486144871172 0.288218111003
+Image error RMS pixels: 722.098585541 429.167902851
+Image error max abs pixels: 1000 592
+
+Base-frame KF state [X_B Y_B Vx_B Vy_B]
+-----------------------------------------
+State mean: 1.24985855938 0.308012673095 -4.7164604935e-05 -0.000380725269073
+State RMS: 1.24986842827 0.308137773718 0.0104197667159 0.0320831008746
+State max abs: 1.26008890009 0.35216888159 0.0605603723526 0.106566534015
+Final state: 1.25214883449 0.308473951437 0.000566919449018 -0.00013130946196
+Position RMS (m): 1.24986842827 0.308137773718
+Velocity RMS (m/s): 0.0104197667159 0.0320831008746
+Max abs difference: log_ekf_velocity - state(3:4): 0 0
+RMS difference: log_ekf_velocity - state(3:4): 0 0
+Mean state sigma: 0.000534600697686 0.00059791746921 0.0146178172342 0.016127004284
+Final state sigma: 4.00028801784e-05 9.41963038566e-05 0.00812160874264 0.0102566300193
+Maximum state sigma: 0.0145338577169 0.0146861401052 0.0631554904953 0.0633750982228
+Measured camera velocity RMS (m/s): 0.0293381389264 0.0146282731574
+Measured camera velocity max abs (m/s): 0.104311650415 0.0733103336209
+Camera velocity feedback valid ratio: 100.000000 %
+Maximum issued XY speed: 0.077273713234 m/s
+RMS issued XY speed: 0.0301897770424 m/s
+RMS(v_ff)/RMS(v_p): 0.0310856149356
+
+How to interpret this test
+--------------------------
+Use the four-state, covariance, NIS, status and controller plots to separate coordinate-transform, measurement-noise, model and controller problems.
+
+Created figures
+---------------
+01_image_error
+02_camera_frame_measurement
+03_ekf_state_base_frame
+04_ekf_state_uncertainty
+05_controller_components_xy
+05b_limited_vs_issued_and_limit_states
+06_nis_time_and_distribution
+07_measurement_and_status_states
+08_camera_velocity_feedback
