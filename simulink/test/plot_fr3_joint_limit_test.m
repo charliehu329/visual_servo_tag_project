@@ -32,7 +32,7 @@ centerFreeRatio = 0.80;
 
 % 与velocity_command_node一致：
 % 最终速度上限 = FR3官方速度上限 * maxVelocityScale
-maxVelocityScale = 0.20;
+maxVelocityScale = 0.40;
 
 % 与velocity_command_node一致，单位rad/s^2。
 maxJointAccelerations = [ ...
