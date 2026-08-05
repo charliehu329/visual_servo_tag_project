@@ -38,7 +38,7 @@ Kpx = 1.0;
 Kpy = 1.0;
 
 % KF 目标速度前馈系数。
-k_ff = 0.5;
+k_ff = 0.0;
 
 % KF 连续接受达到该帧数后，才允许启用速度前馈。
 required_valid_frames = 5;
@@ -49,7 +49,7 @@ measurement_reset_timeout = 2.0;
 
 % 控制器使能。
 enable_proportional = true;
-enable_ekf_feedforward = true;
+enable_ekf_feedforward = false;
 controller_enable = true;
 
 % 保留与原模型一致的 ROS 模式标志。
