@@ -143,10 +143,6 @@ visual_min_depth = 0.10;
 
 %% 8. 最终 7 维关节速度命令保护
 
-% 最终关节速度的一阶低通时间常数，单位：s。
-% 设为 0 可关闭低通滤波。
-% 最终7维关节速度的一阶低通滤波时间常数，用于减少速度突变和抖动。越大：越平滑，但响应越慢；
-joint_command_filter_tau = 0.040;
 
 % 接近建议关节位置边界时的整体降速距离，单位：rad。
 % 关节位置边界大于 0.15 rad：正常速度；
@@ -211,6 +207,7 @@ joint_acceleration_limit = 1.50 * ones(7,1);
 % parameters(8)  = enable_ekf_feedforward
 % parameters(9)  = controller_enable
 % parameters(10) = target_timeout_sec
+% parameters(11) = task_velocity_filter_tau
 %
 % 当前模型不读取工作区变量 controller_parameters，因此这里不再创建
 % 一个重复向量，避免以后再次出现 10 维与 12 维接口不一致的问题。
