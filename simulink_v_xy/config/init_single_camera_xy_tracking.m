@@ -25,6 +25,7 @@ rho_hat = 1/Z_hat;
 Kpx = 1.0;
 Kpy = 1.0;
 k_ff = 0.5;
+task_velocity_filter_tau = 0.04;
 
 % The KF must accept this many consecutive measurements before v_ff is enabled.
 required_valid_frames = 5;

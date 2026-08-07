@@ -40,6 +40,8 @@ Kpy = 1.0;
 % KF 目标速度前馈系数。
 k_ff = 0.0;
 
+task_velocity_filter_tau = 0.04;
+
 % KF 连续接受达到该帧数后，才允许启用速度前馈。
 required_valid_frames = 5;
 
@@ -132,7 +134,7 @@ depth_safe_min = 0.30;
 depth_safe_max = 1.50;
 
 % 目标深度超出安全区时的恢复增益。
-depth_safety_gain = 0.20;
+depth_safety_gain = 0.02;
 
 % 视觉雅可比允许使用的最小深度，单位：m。
 % z 不大于该值时，当前视觉求解不会继续使用该深度。
