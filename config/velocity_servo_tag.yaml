@@ -33,6 +33,8 @@ apriltag_detector:
     depth_max_m: 5.80
 
     target_position_topic: "/apriltag_detector/target_position"
+    use_dynamic_camera_info: true
+    camera_info_topic: "/lens/camera_info"
     show_window: true
 
 
@@ -81,6 +83,26 @@ velocity_command_node:
 
     input_topic: "/velocity_mapper_node/target_joints_velocities"
     command_topic: "/joint_velocity_example_controller/commands"
+
+
+zoom_controller_node:
+  ros__parameters:
+    # Keep true until HOMEZF and serial behavior are supervised on the robot PC.
+    dry_run: true
+    calibration_file: ""
+    serial_port: "/dev/serial/by-id/CHANGE_ME"
+    serial_baud: 115200
+    serial_command_timeout_sec: 35.0
+    distance_timeout_sec: 0.5
+    bootstrap_distance_m: 0.8
+    zoom_deadband_steps: 3
+    focus_deadband_steps: 3
+    max_fx_fy_disagreement_steps: 80.0
+    target_topic: "/lens/target_intrinsics"
+    distance_topic: "/apriltag_detector/target_position"
+    state_topic: "/lens/zoom_state"
+    camera_info_topic: "/lens/camera_info"
+    camera_frame_id: "camera_optical_frame"
 
 
 

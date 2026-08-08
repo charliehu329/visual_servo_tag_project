@@ -63,6 +63,8 @@ def generate_launch_description():
     start_mapper = LaunchConfiguration(
         "start_mapper"
     )
+    start_zoom_controller = LaunchConfiguration("start_zoom_controller")
+    zoom_dry_run = LaunchConfiguration("zoom_dry_run")
 
     declare_params_file = DeclareLaunchArgument(
         "params_file",
@@ -96,6 +98,18 @@ def generate_launch_description():
             "Start the Cartesian-to-joint "
             "velocity mapper."
         ),
+    )
+
+    declare_start_zoom_controller = DeclareLaunchArgument(
+        "start_zoom_controller",
+        default_value="false",
+        description="Start the camera-0 zoom/focus controller.",
+    )
+
+    declare_zoom_dry_run = DeclareLaunchArgument(
+        "zoom_dry_run",
+        default_value="true",
+        description="Do not send ZPOS/FPOS serial commands when true.",
     )
 
     # =========================================================
@@ -144,14 +158,35 @@ def generate_launch_description():
     # 返回LaunchDescription
     # =========================================================
 
+    zoom_controller_node = Node(
+        package="velocity_servo_tag",
+        executable="zoom_controller_node",
+        name="zoom_controller_node",
+        output="screen",
+        emulate_tty=True,
+        condition=IfCondition(start_zoom_controller),
+        parameters=[
+            params_file,
+            {
+                "dry_run": ParameterValue(
+                    zoom_dry_run,
+                    value_type=bool,
+                )
+            },
+        ],
+    )
+
     return LaunchDescription(
         [
             declare_params_file,
             declare_dry_run,
             declare_start_detector,
             declare_start_mapper,
+            declare_start_zoom_controller,
+            declare_zoom_dry_run,
 
             detector_node,
             velocity_mapper_node,
+            zoom_controller_node,
         ]
     )
