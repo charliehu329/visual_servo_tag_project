@@ -101,6 +101,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import Float64MultiArray
 
 from velocity_servo_tag.vision.camera import USBCamera
@@ -187,6 +188,13 @@ class AprilTagDetector:
         self.last_filtered_center = None
         self.last_raw_depth = None
         self.last_filtered_depth = None
+
+    def set_camera_params(self, fx, fy, cx, cy):
+        """Update pose-estimation intrinsics after a zoom/focus command."""
+        values = tuple(float(value) for value in (fx, fy, cx, cy))
+        if not all(np.isfinite(values)) or values[0] <= 0.0 or values[1] <= 0.0:
+            raise ValueError("dynamic camera intrinsics are invalid")
+        self.camera_params = values
 
     def validate_parameters(self):
         """
@@ -467,6 +475,8 @@ class AprilTagDetectorNode(Node):
             "target_position_topic",
             "/apriltag_detector/target_position"
         )
+        self.declare_parameter("use_dynamic_camera_info", True)
+        self.declare_parameter("camera_info_topic", "/lens/camera_info")
         self.declare_parameter("show_window", True)
 
         # =====================================================
@@ -566,6 +576,12 @@ class AprilTagDetectorNode(Node):
                 "target_position_topic"
             ).value
         )
+        self.use_dynamic_camera_info = bool(
+            self.get_parameter("use_dynamic_camera_info").value
+        )
+        self.camera_info_topic = str(
+            self.get_parameter("camera_info_topic").value
+        )
         self.show_window = bool(
             self.get_parameter(
                 "show_window"
@@ -615,6 +631,14 @@ class AprilTagDetectorNode(Node):
             self.target_position_topic,
             1
         )
+        self.camera_info_subscription = None
+        if self.use_dynamic_camera_info:
+            self.camera_info_subscription = self.create_subscription(
+                CameraInfo,
+                self.camera_info_topic,
+                self.camera_info_callback,
+                10,
+            )
 
         self.target_was_detected = False
         self.last_detection_time = None
@@ -642,6 +666,18 @@ class AprilTagDetectorNode(Node):
             f"tag_size={self.tag_size_m:.4f} m, "
             f"topic={self.target_position_topic}."
         )
+
+    def camera_info_callback(self, message):
+        """Use the current zoom-dependent K matrix for AprilTag pose depth."""
+        if len(message.k) != 9:
+            self.get_logger().error("CameraInfo K must contain nine values")
+            return
+        try:
+            self.detector.set_camera_params(
+                message.k[0], message.k[4], message.k[2], message.k[5]
+            )
+        except ValueError as exc:
+            self.get_logger().error(str(exc))
 
 
     def validate_parameters(self):
