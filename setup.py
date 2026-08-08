@@ -112,6 +112,11 @@ setup(
                 "velocity_servo_tag."
                 "velocity_command_node:main"
             ),
+            (
+                "zoom_controller_node = "
+                "velocity_servo_tag."
+                "zoom_controller_node:main"
+            ),
         ],
     },
 )

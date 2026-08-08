@@ -83,6 +83,37 @@ velocity_command_node:
     command_topic: "/joint_velocity_example_controller/commands"
 
 
+zoom_controller_node:
+  ros__parameters:
+    dry_run: true
+    serial_port: "/dev/serial/by-id/CHANGE_ME"
+    serial_baud: 115200
+    serial_command_timeout_sec: 35.0
+    target_topic: "/lens/target_intrinsics"
+    state_topic: "/lens/zoom_state"
+    camera_info_topic: "/lens/camera_info"
+    camera_frame_id: "camera_optical_frame"
+    image_width: 1920
+    image_height: 1080
+    max_fx_fy_disagreement_steps: 20.0
+    zoom_deadband_steps: 3
+    zoom_samples: [0.0, 400.0, 800.0, 1200.0, 1600.0, 2000.0, 2400.0]
+    fx_samples: [2035.797529, 2331.545143, 2713.737027, 3137.392785, 3684.865723, 4505.996199, 5494.414672]
+    fy_samples: [2034.742218, 2331.622073, 2714.807451, 3138.780385, 3683.854745, 4503.318979, 5490.231460]
+    cx_samples: [946.313693, 931.606961, 945.418505, 930.987463, 930.964585, 928.012695, 894.846174]
+    cy_samples: [749.155224, 766.482076, 774.908282, 766.529524, 757.853146, 756.246991, 746.485232]
+    # Flattened [k1,k2,p1,p2,k3] rows; k3 is constrained to zero.
+    distortion_samples_flat: [
+      -0.258094321, 0.261993622, 0.000111694, 0.002053981, 0.0,
+      -0.235809222, 0.428278290, 0.001437905, -0.001850212, 0.0,
+      -0.188571553, 0.616540501, 0.002934832, -0.001131934, 0.0,
+      -0.166386778, 0.918454335, 0.003322227, -0.003138638, 0.0,
+      -0.115889778, 0.972427637, 0.002954982, -0.001741346, 0.0,
+      -0.087717949, 1.419104638, 0.003376276, -0.002862911, 0.0,
+      -0.080995647, 1.287880442, 0.002501424, -0.005151698, 0.0
+    ]
+
+
 
 
 
