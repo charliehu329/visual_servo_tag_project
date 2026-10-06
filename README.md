@@ -12,6 +12,28 @@
 
 ---
 
+# 常用
+# Simulink直接发送关节速度版本
+
+py端启动即可
+```
+detector_handware.launch.py
+```
+
+simulink端
+启动init函数
+运行后可以用test里面的工具画图来改进下一次调参方向
+
+
+
+
+
+
+
+
+
+
+
 ## 1. 概述
 
 本项目将以下模块整合在同一个 ROS 2 包中：
