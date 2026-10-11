@@ -111,11 +111,11 @@ visual_damping_min = 0.015;
 visual_damping_max = 0.20;
 
 % 最小奇异值不大于该值时，总关节速度缩放为零。
-singularity_sigma_stop = 0.025;
+singularity_sigma_stop = 0.005;
 
 % 最小奇异值不小于该值时，不进行奇异度降速。
 % stop 与 warn 之间采用平滑缩放。
-singularity_sigma_warn = 0.080;
+singularity_sigma_warn = 0.01;
 
 
 % sigma_min ≤ singularity_sigma_stop     完全停止

@@ -25,138 +25,76 @@
 
 %% =========================================================
 %% 1. 用户可调参数
-%% =========================================================
 
-% 与Mapper一致：中央60%范围内不启动回中。
+% 与初始化脚本中的软件关节工作区一致；未运行初始化脚本时使用同一默认值。
 centerFreeRatio = 0.80;
+qMin = [-2.3476;-1.5454;-2.4937;-2.7714;-2.5100;0.7773;-2.7045];
+qMax = [2.3476;1.5454;2.4937;-0.4226;2.5100;4.2841;2.7045];
+commandVelocityLimit = 0.20*ones(7,1);
+commandAccelerationLimit = 1.50*ones(7,1);
 
-% 与velocity_command_node一致：
-% 最终速度上限 = FR3官方速度上限 * maxVelocityScale
-maxVelocityScale = 0.40;
+if exist('joint_position_min','var'), qMin = joint_position_min(:); end
+if exist('joint_position_max','var'), qMax = joint_position_max(:); end
+if exist('joint_velocity_limit','var')
+    commandVelocityLimit = joint_velocity_limit(:);
+end
+if exist('joint_acceleration_limit','var')
+    commandAccelerationLimit = joint_acceleration_limit(:);
+end
 
-% 与velocity_command_node一致，单位rad/s^2。
-maxJointAccelerations = [ ...
-    0.50;
-    0.50;
-    0.50;
-    0.50;
-    0.50;
-    0.50;
-    0.50];
-
-% 图片保存参数。
 imageResolutionDpi = 200;
-closeFiguresAfterSave = false;
+if ~exist('closeFiguresAfterSave','var') || isempty(closeFiguresAfterSave)
+    closeFiguresAfterSave = false;
+end
+if ~exist('outputFolder','var') || isempty(outputFolder)
+    outputFolder = fullfile(pwd,'test_results','joint_command_monitor');
+end
 
-% 输出目录。
-outputFolder = fullfile( ...
-    pwd, ...
-    'test_results', ...
-    'joint_command_monitor');
-
-%% =========================================================
-%% 2. FR3官方限制
-%% =========================================================
-
-% FR3官方关节速度上限，单位rad/s。
-fr3MaxJointVelocitiesOfficial = [ ...
-    2.62;
-    2.62;
-    2.62;
-    2.62;
-    5.26;
-    4.18;
-    5.26];
-
-% FR3关节位置硬限位，来自fr3.urdf，单位rad。
-qMin = [ ...
-    -2.9007;
-    -1.8361;
-    -2.9007;
-    -3.0770;
-    -2.8763;
-     0.4398;
-    -3.0508];
-
-qMax = [ ...
-     2.9007;
-     1.8361;
-     2.9007;
-    -0.1169;
-     2.8763;
-     4.6216;
-     3.0508];
-
-%% =========================================================
-%% 3. 派生限制
-%% =========================================================
-
-qMid = 0.5*(qMin + qMax);
-qHalfRange = 0.5*(qMax - qMin);
-
-qCenterLower = ...
-    qMid - centerFreeRatio*qHalfRange;
-
-qCenterUpper = ...
-    qMid + centerFreeRatio*qHalfRange;
-
-commandVelocityLimit = ...
-    fr3MaxJointVelocitiesOfficial*maxVelocityScale;
-
-commandAccelerationLimit = ...
-    maxJointAccelerations(:);
+if numel(qMin) ~= 7 || numel(qMax) ~= 7 || ...
+        numel(commandVelocityLimit) ~= 7 || ...
+        numel(commandAccelerationLimit) ~= 7 || ...
+        any(qMax <= qMin) || any(commandVelocityLimit <= 0) || ...
+        any(commandAccelerationLimit <= 0)
+    error('关节边界、速度限制和加速度限制必须是合法的7维向量。');
+end
 
 %% =========================================================
 %% 4. 读取3类日志
 %% =========================================================
 
-jointSignal = findLoggedSignal( ...
-    'log_joint_position');
-
-velocitySignal = findLoggedSignal( ...
-    'log_command_velocity');
-
-accelerationSignal = findLoggedSignal( ...
-    'log_command_acceleration');
+jointSignal = findLoggedSignal('log_joint_position');
+velocitySignal = findLoggedSignal('log_qdot_command');
+accelerationSignal = findLoggedSignal('log_command_acceleration');
 
 if isempty(jointSignal)
-    error([ ...
-        '没有找到log_joint_position。' ...
-        '请确认模型已记录7维关节位置。']);
+    error('没有找到joint_position日志；请确认模型Diagnostics Outputs已启用。');
+end
+if isempty(velocitySignal)
+    error('没有找到qdot_command日志；请确认模型Diagnostics Outputs已启用。');
+end
+if isempty(accelerationSignal)
+    fprintf(['模型没有记录命令加速度，将由qdot_command按时间差分估算。' ...
+        '该值是诊断估计，不是控制器内部测量值。\\n']);
 end
 
-if isempty(velocitySignal)
-    error([ ...
-        '没有找到log_command_velocity。' ...
-        '请确认模型已记录7维最终命令速度。']);
-end
+[timeQ,qData] = signalToTimeData(jointSignal);
+[timeV,vData] = signalToTimeData(velocitySignal);
+validateSevenJointData(qData,'joint_position');
+validateSevenJointData(vData,'qdot_command');
 
 if isempty(accelerationSignal)
-    error([ ...
-        '没有找到log_command_acceleration。' ...
-        '请确认模型已记录7维命令加速度。']);
+    if numel(timeV)<2 || any(diff(timeV)<=0)
+        error('qdot_command时间戳不足或非递增，无法估算加速度。');
+    end
+    timeA = timeV;
+    aData = zeros(size(vData));
+    for jointIndex=1:7
+        aData(:,jointIndex) = gradient(vData(:,jointIndex),timeV);
+    end
+else
+    [timeA,aData] = signalToTimeData(accelerationSignal);
+    validateSevenJointData(aData,'log_command_acceleration');
 end
-
-[timeQ,qData] = ...
-    signalToTimeData(jointSignal);
-
-[timeV,vData] = ...
-    signalToTimeData(velocitySignal);
-
-[timeA,aData] = ...
-    signalToTimeData(accelerationSignal);
-
-validateSevenJointData( ...
-    qData, ...
-    'log_joint_position');
-
-validateSevenJointData( ...
-    vData, ...
-    'log_command_velocity');
-
-validateSevenJointData( ...
-    aData, ...
-    'log_command_acceleration');
 
 %% =========================================================
 %% 5. 删除JointState启动阶段默认零值
@@ -472,13 +410,7 @@ layout2 = tiledlayout( ...
     'TileSpacing','compact', ...
     'Padding','compact');
 
-title( ...
-    layout2, ...
-    sprintf( ...
-        ['FR3 Command Velocity | ' ...
-         'Applied Limit = Official Limit x %.2f'], ...
-        maxVelocityScale), ...
-    'Interpreter','none');
+title(layout2,'FR3 Command Velocity | qdot command vs model software limit');
 
 for jointIndex = 1:7
     ax = nexttile(layout2,jointIndex);
@@ -564,9 +496,7 @@ axis(axSummary2,'off');
 summaryLines2 = strings(10,1);
 summaryLines2(1) = "Command velocity summary";
 summaryLines2(2) = "---------------------------------------------";
-summaryLines2(3) = sprintf( ...
-    "maxVelocityScale = %.3f", ...
-    maxVelocityScale);
+summaryLines2(3) = "Software velocity limits are read from the q_dot initialization workspace.";
 
 for jointIndex = 1:7
     summaryLines2(jointIndex+3) = sprintf( ...
@@ -757,17 +687,13 @@ jointPositionMetrics = table( ...
 
 commandVelocityMetrics = table( ...
     (1:7).', ...
-    fr3MaxJointVelocitiesOfficial, ...
-    repmat(maxVelocityScale,7,1), ...
     commandVelocityLimit, ...
     finalVelocity.', ...
     maximumVelocityAbs.', ...
     maximumVelocityUsagePercent.', ...
     'VariableNames',{ ...
         'Joint', ...
-        'OfficialVelocityLimitRadPerSec', ...
-        'VelocityScale', ...
-        'AppliedVelocityLimitRadPerSec', ...
+        'SoftwareVelocityLimitRadPerSec', ...
         'FinalVelocityRadPerSec', ...
         'PeakAbsVelocityRadPerSec', ...
         'MaximumVelocityUsagePercent'});
@@ -820,64 +746,61 @@ fprintf('命令加速度图：\n%s_command_acceleration.png\n\n',fileBase);
 function signal = findLoggedSignal(signalName)
 
 signal = [];
-candidateOutputNames = {'out','simOut'};
+switch signalName
+    case 'log_joint_position'
+        sourceNames = {'joint_position','log_joint_position'};
+    case {'log_qdot_command','log_command_velocity'}
+        sourceNames = {'qdot_command','log_qdot_command','log_command_velocity'};
+    case 'log_command_acceleration'
+        sourceNames = {'qdot_acceleration','log_command_acceleration'};
+    otherwise
+        sourceNames = {regexprep(signalName,'^log_',''),signalName};
+end
 
+candidateOutputNames = {'out','simOut','ans'};
 for outputIndex = 1:numel(candidateOutputNames)
     outputName = candidateOutputNames{outputIndex};
-
-    existsInBase = evalin( ...
-        'base', ...
-        sprintf( ...
-            'exist(''%s'',''var'')', ...
-            outputName));
-
+    existsInBase = evalin('base',sprintf('exist(''%s'',''var'')',outputName));
     if ~existsInBase
         continue;
     end
 
-    simulationOutput = evalin( ...
-        'base', ...
-        outputName);
-
-    if ~isa( ...
-            simulationOutput, ...
-            'Simulink.SimulationOutput')
+    simulationOutput = evalin('base',outputName);
+    if ~isa(simulationOutput,'Simulink.SimulationOutput')
         continue;
     end
 
     outputNames = simulationOutput.who;
-
-    if any(strcmp(outputNames,signalName))
-        signal = simulationOutput.get(signalName);
-        return;
+    for sourceIndex = 1:numel(sourceNames)
+        sourceName = sourceNames{sourceIndex};
+        if any(strcmp(outputNames,sourceName))
+            signal = simulationOutput.get(sourceName);
+            return;
+        end
     end
 
     if any(strcmp(outputNames,'logsout'))
         logsout = simulationOutput.get('logsout');
-
-        if isa( ...
-                logsout, ...
-                'Simulink.SimulationData.Dataset')
-            try
-                element = logsout.getElement(signalName);
-                signal = element.Values;
-                return;
-            catch
+        if isa(logsout,'Simulink.SimulationData.Dataset')
+            for sourceIndex = 1:numel(sourceNames)
+                try
+                    element = logsout.getElement(sourceNames{sourceIndex});
+                    signal = element.Values;
+                    return;
+                catch
+                end
             end
         end
     end
 end
 
-existsDirectly = evalin( ...
-    'base', ...
-    sprintf( ...
-        'exist(''%s'',''var'')', ...
-        signalName));
-
-if existsDirectly
-    signal = evalin( ...
-        'base', ...
-        signalName);
+for sourceIndex = 1:numel(sourceNames)
+    sourceName = sourceNames{sourceIndex};
+    existsInBase = evalin('base',sprintf('exist(''%s'',''var'')',sourceName));
+    if existsInBase
+        signal = evalin('base',sourceName);
+        return;
+    end
 end
 
 end

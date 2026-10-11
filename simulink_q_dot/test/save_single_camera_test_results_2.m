@@ -17,6 +17,10 @@
 % - 本脚本不会重新运行 Simulink，只处理刚刚结束的那次测试。
 % - 建议每次测试前先设置不同的 testName。
 
+run(fullfile(fileparts(mfilename('fullpath')), ...
+    'save_single_camera_test_results.m'));
+return;
+
 %% 1. 用户设置
 
 % 如果运行脚本前没有手动设置 testName，则使用默认名称。
@@ -29,7 +33,7 @@ closeFiguresAfterSave = false;
 saveCompleteSimulationOutput = true;
 
 % 所有测试结果保存到当前目录下的 test_results 文件夹。
-resultsRoot = fullfile(pwd,'test_results');
+resultsRoot = fileparts(mfilename('fullpath'));
 
 %% 2. 创建本次测试文件夹
 

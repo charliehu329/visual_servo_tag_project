@@ -63,11 +63,13 @@ apriltag_detector.py
         u、v：
             标签中心的像素坐标，单位 pixel。
         depth_m：
-            AprilTag 中心相对于相机光心的 Z 方向深度，单位 m。
+            由标签像素边长几何反推的 Z 方向深度，单位 m：
+            Z = camera_fx * tag_size_m / 标签像素平均边长。
+            本节点不做位姿估计，因此该深度不依赖 apriltag 的正交迭代。
 
 接口：
     AprilTagDetector.detect(image)
-        检测成功时返回 [u, v]。
+        检测成功时返回 [u, v, depth_m]。
         检测失败时返回 None。
 
     AprilTagDetectorNode
@@ -79,12 +81,16 @@ apriltag_detector.py
     3. 使用 pupil_apriltags 检测 tag36h11 标签。
     4. 只保留 target_tag_id 指定的目标。
     5. 对目标中心 u、v 进行一阶低通滤波。
-    6. 发布 [valid, u, v]。
-    7. 在预览图像中绘制标签边框、中心和检测信息。
+    6. 由标签的像素边长几何反推深度 depth_m。
+    7. 发布 [valid, u, v, depth_m]。
+    8. 在预览图像中绘制标签边框、中心和检测信息。
 
 备注：
-    1. 当前版本只为基础单目 IBVS 发布 u、v，不计算深度、XYZ、
-       R/t 位姿矩阵或相机到机械臂的坐标变换。
+    1. 本版本不做位姿估计。apriltag 的正交迭代位姿求解在退化视角下会
+       打印 "Error, more than one new minima found." 并返回不可信的位姿
+       （旋转矩阵行列式可能不为 1），深度随之失效。本节点只用 u、v 与
+       几何深度，因此关闭位姿估计。代价：标签倾斜时几何深度略偏大
+       （倾斜 10° 约 +1%，30° 约 +8%，40° 约 +15%）。
     2. 当前实验使用 tag36h11、ID 0，推荐打印标签最外侧正方形
        实际边长为 12 cm，以提高约 1 m 距离下快速运动时的检测稳定性。
     3. 未检测到目标或相机读取失败时发布 [0.0, 0.0, 0.0]。
@@ -93,6 +99,9 @@ apriltag_detector.py
        如果依赖未安装，节点会在启动时直接给出安装提示。
     5. 运行本节点时不能同时启动原有 visual_servo_law，否则两个节点
        会同时占用 USB 相机，并同时向控制链路发送视觉信息。
+    6. tag_size_m 必须等于标签的实际边长（tag36h11 为最外侧黑色方形
+       的边长，不含白边），深度与它成反比。建议把标签放在已知距离处
+       核对一次读数，偏差超过 5% 就先修正 tag_size_m 或相机内参。
 """
 
 import time
@@ -129,6 +138,7 @@ class AprilTagDetector:
         depth_filter_alpha=0.4,
         depth_min_m=0.05,
         depth_max_m=5.0,
+        max_edge_ratio=1.8,
     ):
         """
         初始化 AprilTag 检测参数。
@@ -166,6 +176,15 @@ class AprilTagDetector:
         )
         self.depth_min_m = float(depth_min_m)
         self.depth_max_m = float(depth_max_m)
+
+        # 四边形边长比上限 max(edge)/min(edge)，用于剔除被裁切、遮挡
+        # 或误检的四边形（正常倾斜通常不超过 1.3）。0 表示不检查。
+        self.max_edge_ratio = float(max_edge_ratio)
+
+        # 供节点打日志使用的诊断量。
+        self.last_drop_reason = None
+        self.last_edge_pixel = None
+        self.last_edge_ratio = None
 
         self.validate_parameters()
 
@@ -249,6 +268,11 @@ class AprilTagDetector:
                 "depth_min_m 和 depth_max_m 范围不合法。"
             )
 
+        if self.max_edge_ratio < 0.0:
+            raise ValueError(
+                "max_edge_ratio 不能小于 0（0 表示不检查）。"
+            )
+
     def reset_tracking_state(self):
         """
         清除目标丢失前保存的检测和滤波状态。
@@ -259,6 +283,8 @@ class AprilTagDetector:
         self.last_filtered_center = None
         self.last_raw_depth = None
         self.last_filtered_depth = None
+        self.last_edge_pixel = None
+        self.last_edge_ratio = None
 
     def filter_depth(self, raw_depth):
         """对 AprilTag 深度进行一阶低通滤波。"""
@@ -317,6 +343,7 @@ class AprilTagDetector:
         """
 
         if image is None:
+            self.last_drop_reason = "camera image unavailable"
             self.reset_tracking_state()
             return None
 
@@ -324,6 +351,7 @@ class AprilTagDetector:
             image.ndim != 3 or
             image.shape[2] != 3
         ):
+            self.last_drop_reason = "unexpected image shape"
             self.reset_tracking_state()
             return None
 
@@ -340,9 +368,7 @@ class AprilTagDetector:
 
         detections = self.detector.detect(
             gray_image,
-            estimate_tag_pose=True,
-            camera_params=self.camera_params,
-            tag_size=self.tag_size_m,
+            estimate_tag_pose=False
         )
 
         target_detections = [
@@ -353,6 +379,8 @@ class AprilTagDetector:
         ]
 
         if not target_detections:
+            # 正常情况（视野里没有标签），不作为异常记录。
+            self.last_drop_reason = None
             self.reset_tracking_state()
             return None
 
@@ -374,28 +402,68 @@ class AprilTagDetector:
             target.corners,
             dtype=float
         )
-        pose_t = np.asarray(
-            target.pose_t,
-            dtype=float
-        ).reshape(-1)
 
         if (
             raw_center.shape != (2,) or
             corners.shape != (4, 2) or
-            pose_t.size < 3 or
             not np.all(np.isfinite(raw_center)) or
-            not np.all(np.isfinite(corners)) or
-            not np.all(np.isfinite(pose_t[:3]))
+            not np.all(np.isfinite(corners))
         ):
+            self.last_drop_reason = "invalid detection geometry"
             self.reset_tracking_state()
             return None
 
-        raw_depth = float(pose_t[2])
+        # 几何深度：Z = fx * 标签物理边长 / 标签像素边长。
+        # corners 按顺序绕标签一周，相邻角点构成 4 条边。
+        edge_pixels = np.linalg.norm(
+            np.roll(corners, -1, axis=0) - corners,
+            axis=1
+        )
+        edge_pixel = float(np.mean(edge_pixels))
+        edge_ratio = float(
+            np.max(edge_pixels) /
+            max(float(np.min(edge_pixels)), 1e-9)
+        )
+
+        if not np.isfinite(edge_pixel) or edge_pixel <= 1.0:
+            self.last_drop_reason = (
+                f"tag edge too small ({edge_pixel:.1f} px)"
+            )
+            self.reset_tracking_state()
+            return None
+
+        if (
+            self.max_edge_ratio > 0.0 and
+            edge_ratio > self.max_edge_ratio
+        ):
+            self.last_drop_reason = (
+                "quad distorted, edge ratio "
+                f"{edge_ratio:.2f} > {self.max_edge_ratio:.2f}"
+            )
+            self.reset_tracking_state()
+            return None
+
+        # camera_params[0] 即 fx，单位 pixel。
+        raw_depth = (
+            float(self.camera_params[0]) *
+            self.tag_size_m /
+            edge_pixel
+        )
+
         if not (
             self.depth_min_m <= raw_depth <= self.depth_max_m
         ):
+            self.last_drop_reason = (
+                f"depth {raw_depth:.3f} m outside "
+                f"[{self.depth_min_m:.3f}, "
+                f"{self.depth_max_m:.3f}] m"
+            )
             self.reset_tracking_state()
             return None
+
+        self.last_drop_reason = None
+        self.last_edge_pixel = edge_pixel
+        self.last_edge_ratio = edge_ratio
 
         filtered_center = self.filter_center(
             raw_center
@@ -462,6 +530,7 @@ class AprilTagDetectorNode(Node):
         self.declare_parameter("depth_filter_alpha", 0.4)
         self.declare_parameter("depth_min_m", 0.25)
         self.declare_parameter("depth_max_m", 0.80)
+        self.declare_parameter("max_edge_ratio", 1.8)
 
         self.declare_parameter(
             "target_position_topic",
@@ -560,6 +629,9 @@ class AprilTagDetectorNode(Node):
         self.depth_max_m = float(
             self.get_parameter("depth_max_m").value
         )
+        self.max_edge_ratio = float(
+            self.get_parameter("max_edge_ratio").value
+        )
 
         self.target_position_topic = str(
             self.get_parameter(
@@ -597,6 +669,7 @@ class AprilTagDetectorNode(Node):
             depth_filter_alpha=self.depth_filter_alpha,
             depth_min_m=self.depth_min_m,
             depth_max_m=self.depth_max_m,
+            max_edge_ratio=self.max_edge_ratio,
         )
 
         self.camera = USBCamera(
@@ -682,6 +755,11 @@ class AprilTagDetectorNode(Node):
 
         if not 0.0 < self.depth_min_m < self.depth_max_m:
             raise ValueError("深度范围参数不合法。")
+
+        if self.max_edge_ratio < 0.0:
+            raise ValueError(
+                "max_edge_ratio 不能小于 0（0 表示不检查）。"
+            )
 
         if not self.target_position_topic:
             raise ValueError(
@@ -885,6 +963,15 @@ class AprilTagDetectorNode(Node):
             self.last_detection_feature = None
             self.last_pixel_velocity = None
             self.publish_invalid_target()
+
+            drop_reason = self.detector.last_drop_reason
+
+            if drop_reason is not None:
+                self.get_logger().warn(
+                    f"Frame dropped: {drop_reason}. "
+                    "Publishing invalid target.",
+                    throttle_duration_sec=1.0
+                )
 
             if self.target_was_detected:
                 self.get_logger().warn(
