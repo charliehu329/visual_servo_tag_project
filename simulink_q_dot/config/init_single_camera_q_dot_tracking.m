@@ -51,7 +51,7 @@ measurement_reset_timeout = 2.0;
 
 % 控制器使能。
 enable_proportional = true;
-enable_ekf_feedforward = false;
+enable_ekf_feedforward = true;
 controller_enable = true;
 
 % 保留与原模型一致的 ROS 模式标志。
@@ -126,19 +126,19 @@ singularity_sigma_warn = 0.01;
 %% 7. 零空间关节姿态与深度安全区
 
 % 零空间关节中心回避增益。
-nullspace_posture_gain = 0.08;
+nullspace_posture_gain = 0.000001;
 
 % 目标深度安全区，单位：m。
 % 深度处于该区间内时，深度安全任务不主动工作。
-depth_safe_min = 0.30;
-depth_safe_max = 1.50;
+depth_safe_min = 0.10;
+depth_safe_max = 5.50;
 
 % 目标深度超出安全区时的恢复增益。
 depth_safety_gain = 0.02;
 
 % 视觉雅可比允许使用的最小深度，单位：m。
 % z 不大于该值时，当前视觉求解不会继续使用该深度。
-visual_min_depth = 0.10;
+visual_min_depth = 0.01;
 
 
 %% 8. 最终 7 维关节速度命令保护
@@ -146,7 +146,7 @@ visual_min_depth = 0.10;
 
 % 接近建议关节位置边界时的整体降速距离，单位：rad。
 % 关节位置边界大于 0.15 rad：正常速度；
-joint_soft_margin = 0.15;
+joint_soft_margin = 0.05;
 
 % 零空间任务使用的名义关节构型，单位：rad。
 joint_nominal_configuration = [ ...
@@ -181,13 +181,13 @@ joint_position_max = [ ...
 % 首次真机验证使用的保守软件关节速度上限，单位：rad/s。
 % 这不是 FR3 的硬件最大速度。
 joint_velocity_limit = [ ...
-    0.20; ...
-    0.20; ...
-    0.20; ...
-    0.20; ...
-    0.25; ...
-    0.25; ...
-    0.25];
+    0.60; ...
+    0.60; ...
+    0.60; ...
+    0.60; ...
+    0.65; ...
+    0.65; ...
+    0.65];
 
 % 首次真机验证使用的保守软件关节加速度上限，单位：rad/s^2。
 joint_acceleration_limit = 1.50 * ones(7,1);
