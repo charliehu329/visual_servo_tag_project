@@ -209,6 +209,12 @@ fprintf('找到%d个日志。\n',numel(availableLogNames));
 if ~isempty(missingLogs)
     fprintf('以下日志未找到，将跳过对应分析：\n');
     fprintf('  %s\n',strjoin(missingLogs,', '));
+
+    if any(strcmp(missingLogs,'log_ekf_state'))
+        fprintf(['提示：模型当前没有记录EKF估计（图3、图3B、图4会缺失）。\n' ...
+            '在模型Diagnostics Outputs中为ekf_state信号加一个To Workspace块，\n' ...
+            '变量名用ekf_state即可；或运行add_ekf_state_logging.m自动添加。\n']);
+    end
 end
 
 %% 5. 保存参数快照
@@ -447,6 +453,96 @@ if isfield(logs,'log_ekf_state')
         saveTestFigure(fig,figureFolder,'03_ekf_state_base_frame');
         createdFigures{end+1} = '03_ekf_state_base_frame'; %#ok<SAGROW>
         if closeFiguresAfterSave, close(fig); end
+    end
+end
+
+% ---------------------------------------------------------
+% 图3B：EKF估计的目标位移（Base坐标系）
+%
+% 左图：目标在Base坐标系XY平面上的估计轨迹；
+% 右图：相对起始参考点的估计位移，圆点为量测被KF接受的时刻。
+%
+% 说明：
+% - 状态在KF未初始化（或超时被重置）的时段为0，这里置NaN，
+%   以免轨迹虚假地跳回原点。
+% - 位移参考点取KF初始化后最初0.5 s内有效估计的均值，
+%   比用单个首次估计（本身含量测噪声）更稳。
+% ---------------------------------------------------------
+if isfield(logs,'log_ekf_state')
+    [time,stateData] = signalToTimeData(logs.log_ekf_state);
+
+    if size(stateData,2) >= 4
+        positionX = stateData(:,1);
+        positionY = stateData(:,2);
+        stateMask = all(isfinite(stateData(:,1:2)),2);
+
+        if isfield(logs,'log_ekf_initialized')
+            stateMask = stateMask & ...
+                interpolateBooleanSignal(logs.log_ekf_initialized,time);
+        else
+            stateMask = stateMask & ...
+                (abs(positionX) > 0 | abs(positionY) > 0);
+        end
+
+        positionX(~stateMask) = NaN;
+        positionY(~stateMask) = NaN;
+
+        validIndices = find(stateMask);
+
+        if numel(validIndices) >= 10
+            firstValidIndex = validIndices(1);
+            referenceMask = stateMask & ...
+                time <= time(firstValidIndex)+0.5;
+            referenceX = mean(positionX(referenceMask),'omitnan');
+            referenceY = mean(positionY(referenceMask),'omitnan');
+
+            displacementX = positionX-referenceX;
+            displacementY = positionY-referenceY;
+
+            fig = figure('Visible',visibilityValue, ...
+                'Name','EKF Target Displacement');
+            tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
+
+            nexttile;
+            plot(positionX,positionY,'LineWidth',1.15);
+            hold on;
+            plot(referenceX,referenceY,'o','MarkerSize',8,'LineWidth',1.3);
+            axis equal;
+            grid on;
+            xlabel('\hat{X}_B (m)');
+            ylabel('\hat{Y}_B (m)');
+            legend({'EKF估计轨迹','参考起点'},'Location','best');
+            title('Estimated Target Path in Base Frame');
+
+            nexttile;
+            legendLabels = {'\Delta X_B','\Delta Y_B'};
+            plot(time,displacementX,'LineWidth',1.15);
+            hold on;
+            plot(time,displacementY,'LineWidth',1.15);
+
+            if isfield(logs,'log_measurement_accepted')
+                acceptedMask = interpolateBooleanSignal( ...
+                    logs.log_measurement_accepted,time) & stateMask;
+                plot(time(acceptedMask),displacementX(acceptedMask), ...
+                    '.','MarkerSize',9);
+                plot(time(acceptedMask),displacementY(acceptedMask), ...
+                    '.','MarkerSize',9);
+                legendLabels = [legendLabels, ...
+                    {'接受帧 (X)','接受帧 (Y)'}];
+            end
+
+            yline(0,':');
+            grid on;
+            xlabel('Time (s)');
+            ylabel('Displacement from reference (m)');
+            legend(legendLabels,'Location','best');
+            title('EKF Estimated Target Displacement');
+
+            saveTestFigure(fig,figureFolder,'03b_ekf_target_displacement');
+            createdFigures{end+1} = ...
+                '03b_ekf_target_displacement'; %#ok<SAGROW>
+            if closeFiguresAfterSave, close(fig); end
+        end
     end
 end
 
@@ -1069,9 +1165,9 @@ switch logName
     case {'log_error','log_e'}
         sourceNames = {'image_error','error','e'};
     case 'log_ekf_state'
-        sourceNames = {'ekf_state'};
+        sourceNames = {'ekf_state','ekf_state_hat','kf_state','x_hat'};
     case 'log_ekf_covariance'
-        sourceNames = {'ekf_covariance'};
+        sourceNames = {'ekf_covariance','kf_covariance','P_ekf'};
     case 'log_ekf_velocity'
         sourceNames = {'v_target_hat','ekf_velocity'};
     case {'log_camera_velocity','log_v_camera_measured'}

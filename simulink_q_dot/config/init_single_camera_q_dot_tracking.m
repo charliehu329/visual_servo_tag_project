@@ -22,8 +22,8 @@ T_end = inf;
 % 固定焦距针孔相机内参，焦距和主点单位均为 pixel。
 fx = 2057;
 fy = 2054;
-cx = 1000;
-cy = 592;
+cx = 640;
+cy = 360;
 
 % 名义工作深度，单位：m。
 % 实时有效深度 z 存在时，控制器会优先使用实时 z。
@@ -84,7 +84,7 @@ Q_ekf = process_accel_std^2 * [ ...
 R_ekf = diag([1e-8, 1e-8]);
 
 % 二维测量的 95% 卡方门限。
-ekf_gate_threshold = 5.991;
+ekf_gate_threshold = 9.21;
 
 
 %% 5. 输入超时与目标短时丢失保持
@@ -190,7 +190,7 @@ joint_velocity_limit = [ ...
     0.65];
 
 % 首次真机验证使用的保守软件关节加速度上限，单位：rad/s^2。
-joint_acceleration_limit = 1.50 * ones(7,1);
+joint_acceleration_limit = 4.50 * ones(7,1);
 
 
 %% 9. 控制器内部 10 维参数顺序说明

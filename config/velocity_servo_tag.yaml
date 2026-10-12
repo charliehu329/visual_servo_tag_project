@@ -6,15 +6,15 @@
 apriltag_detector:
   ros__parameters:
     camera_index: 2
-    camera_width: 1920
-    camera_height: 1080
+    camera_width: 1280
+    camera_height: 720
     camera_fps: 60.0
 
     tag_family: "tag36h11"
     target_tag_id: 0
 
     detector_threads: 8
-    quad_decimate: 2.0
+    quad_decimate: 4.0
     quad_sigma: 0.0
     refine_edges: true
     decode_sharpening: 0.25
@@ -42,7 +42,7 @@ apriltag_detector:
     max_edge_ratio: 1.8
 
     target_position_topic: "/apriltag_detector/target_position"
-    show_window: true
+    show_window: false
 
 
 velocity_mapper_node:
