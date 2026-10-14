@@ -49,6 +49,16 @@ setup(
             ),
         ),
 
+        (
+            os.path.join(
+                "share",
+                package_name,
+                "config",
+                "lens_calibration",
+            ),
+            glob("config/lens_calibration/*.json"),
+        ),
+
         # 本包使用的URDF。
         (
             os.path.join(
@@ -111,6 +121,11 @@ setup(
                 "velocity_command_node = "
                 "velocity_servo_tag."
                 "velocity_command_node:main"
+            ),
+            (
+                "zoom_controller_node = "
+                "velocity_servo_tag."
+                "zoom_controller_node:main"
             ),
         ],
     },

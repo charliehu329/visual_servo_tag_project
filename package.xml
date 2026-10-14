@@ -53,6 +53,10 @@
     sensor_msgs
   </depend>
 
+  <depend>
+    std_srvs
+  </depend>
+
   <!-- ===================================================== -->
   <!-- ROS 2 launch dependencies -->
   <!-- ===================================================== -->
@@ -119,6 +123,10 @@
 
   <exec_depend>
     python3-opencv
+  </exec_depend>
+
+  <exec_depend>
+    python3-serial
   </exec_depend>
 
   <exec_depend>

@@ -61,6 +61,8 @@ def generate_launch_description():
     start_detector = LaunchConfiguration(
         "start_detector"
     )
+    start_zoom_controller = LaunchConfiguration("start_zoom_controller")
+    zoom_dry_run = LaunchConfiguration("zoom_dry_run")
 
     dry_run = LaunchConfiguration("dry_run")
     command_mode = LaunchConfiguration(
@@ -110,6 +112,18 @@ def generate_launch_description():
         description=(
             "Start the USB AprilTag detector."
         ),
+    )
+
+    declare_start_zoom_controller = DeclareLaunchArgument(
+        "start_zoom_controller",
+        default_value="false",
+        description="Start the camera-0 zoom/focus controller.",
+    )
+
+    declare_zoom_dry_run = DeclareLaunchArgument(
+        "zoom_dry_run",
+        default_value="true",
+        description="Do not send lens serial commands when true.",
     )
 
     declare_dry_run = DeclareLaunchArgument(
@@ -212,6 +226,8 @@ def generate_launch_description():
             "params_file": params_file,
             "dry_run": dry_run,
             "start_detector": start_detector,
+            "start_zoom_controller": start_zoom_controller,
+            "zoom_dry_run": zoom_dry_run,
         }.items(),
     )
 
@@ -226,6 +242,8 @@ def generate_launch_description():
             declare_use_rviz,
             declare_start_hardware,
             declare_start_detector,
+            declare_start_zoom_controller,
+            declare_zoom_dry_run,
             declare_dry_run,
             declare_command_mode,
             declare_max_velocity_scale,
