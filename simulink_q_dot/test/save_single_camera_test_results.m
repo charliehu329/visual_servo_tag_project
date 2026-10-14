@@ -52,10 +52,19 @@ if ~ismember(testType,validTestTypes)
 end
 
 analysisStartSec = 1.0;
-showFigures = true;
-closeFiguresAfterSave = false;
-saveCompleteSimulationOutput = true;
-resultsRoot = fullfile(pwd,'test_results');
+if ~exist('showFigures','var') || isempty(showFigures)
+    showFigures = true;
+end
+if ~exist('closeFiguresAfterSave','var') || isempty(closeFiguresAfterSave)
+    closeFiguresAfterSave = false;
+end
+if ~exist('saveCompleteSimulationOutput','var') || isempty(saveCompleteSimulationOutput)
+    saveCompleteSimulationOutput = true;
+end
+if ~exist('resultsRoot','var') || isempty(resultsRoot)
+    resultsRoot = fileparts(mfilename('fullpath'));
+
+end
 
 %% 2. 创建本次测试文件夹
 
@@ -123,6 +132,7 @@ requestedLogs = { ...
     'log_v_p', ...
     'log_v_ff', ...
     'log_v_issued', ...
+    'log_v_task_raw', ...
     'log_v_norm_limited', ...
     'log_saturation_active', ...
     'log_acceleration_active', ...
@@ -139,7 +149,23 @@ requestedLogs = { ...
     'log_u', ...
     'log_v', ...
     'log_joint_position', ...
-    'log_joint_velocity'};
+    'log_joint_velocity', ...
+    'log_qdot_raw', ...
+    'log_qdot_command', ...
+    'log_velocity_scale', ...
+    'log_acceleration_scale', ...
+    'log_position_scale', ...
+    'log_guard_valid', ...
+    'log_target_age', ...
+    'log_joint_age', ...
+    'log_target_data', ...
+    'log_sigma_min', ...
+    'log_singularity_scale', ...
+    'log_damping_used', ...
+    'log_solver_valid', ...
+    'log_control_active', ...
+    'log_kinematics_valid', ...
+    'log_target_visible'};
 
 logs = struct();
 missingLogs = {};
@@ -154,6 +180,8 @@ for logIndex = 1:numel(requestedLogs)
         logs.(logName) = signal;
     end
 end
+
+[logs,missingLogs] = deriveCurrentModelLogs(logs,missingLogs);
 
 % 兼容log_error和log_e。
 if ~isfield(logs,'log_error') && isfield(logs,'log_e')
@@ -181,6 +209,12 @@ fprintf('找到%d个日志。\n',numel(availableLogNames));
 if ~isempty(missingLogs)
     fprintf('以下日志未找到，将跳过对应分析：\n');
     fprintf('  %s\n',strjoin(missingLogs,', '));
+
+    if any(strcmp(missingLogs,'log_ekf_state'))
+        fprintf(['提示：模型当前没有记录EKF估计（图3、图3B、图4会缺失）。\n' ...
+            '在模型Diagnostics Outputs中为ekf_state信号加一个To Workspace块，\n' ...
+            '变量名用ekf_state即可；或运行add_ekf_state_logging.m自动添加。\n']);
+    end
 end
 
 %% 5. 保存参数快照
@@ -197,6 +231,7 @@ parameterNames = { ...
     'Kpx', ...
     'Kpy', ...
     'k_ff', ...
+    'task_velocity_filter_tau', ...
     'enable_proportional', ...
     'enable_ekf_feedforward', ...
     'controller_enable', ...
@@ -207,11 +242,24 @@ parameterNames = { ...
     'ekf_gate_threshold', ...
     'required_valid_frames', ...
     'measurement_reset_timeout', ...
-    'ff_filter_tau', ...
     'target_timeout_sec', ...
     'joint_state_timeout_sec', ...
     'camera_velocity_feedback_timeout_sec', ...
-    'controller_parameters', ...
+    'visual_damping_min', ...
+    'visual_damping_max', ...
+    'singularity_sigma_stop', ...
+    'singularity_sigma_warn', ...
+    'nullspace_posture_gain', ...
+    'depth_safe_min', ...
+    'depth_safe_max', ...
+    'depth_safety_gain', ...
+    'visual_min_depth', ...
+    'joint_soft_margin', ...
+    'joint_nominal_configuration', ...
+    'joint_position_min', ...
+    'joint_position_max', ...
+    'joint_velocity_limit', ...
+    'joint_acceleration_limit', ...
     'T_link8_camera'};
 
 parameters = struct();
@@ -259,6 +307,35 @@ if isfield(logs,'log_ekf_state')
 
         writetable(stateTable,fullfile(runFolder,'ekf_state_timeseries.csv'));
     end
+end
+
+% 单独导出奇异度时序，便于Origin、Excel或后续MATLAB分析。
+if isfield(logs,'log_sigma_min')
+    [singularityTime,sigmaData] = ...
+        signalToTimeData(logs.log_sigma_min);
+
+    singularityTable = table( ...
+        singularityTime, ...
+        sigmaData(:,1), ...
+        'VariableNames',{'time_s','sigma_min'});
+
+    if isfield(logs,'log_singularity_scale')
+        [scaleTime,scaleData] = ...
+            signalToTimeData(logs.log_singularity_scale);
+        singularityTable.singularity_scale = ...
+            interpolateData(scaleTime,scaleData(:,1), ...
+            singularityTime,'linear');
+    end
+    if isfield(logs,'log_damping_used')
+        [dampingTime,dampingData] = ...
+            signalToTimeData(logs.log_damping_used);
+        singularityTable.damping_used = ...
+            interpolateData(dampingTime,dampingData(:,1), ...
+            singularityTime,'linear');
+    end
+
+    writetable(singularityTable, ...
+        fullfile(runFolder,'singularity_timeseries.csv'));
 end
 
 %% 8. 保存初始化文件和YAML配置副本
@@ -376,6 +453,96 @@ if isfield(logs,'log_ekf_state')
         saveTestFigure(fig,figureFolder,'03_ekf_state_base_frame');
         createdFigures{end+1} = '03_ekf_state_base_frame'; %#ok<SAGROW>
         if closeFiguresAfterSave, close(fig); end
+    end
+end
+
+% ---------------------------------------------------------
+% 图3B：EKF估计的目标位移（Base坐标系）
+%
+% 左图：目标在Base坐标系XY平面上的估计轨迹；
+% 右图：相对起始参考点的估计位移，圆点为量测被KF接受的时刻。
+%
+% 说明：
+% - 状态在KF未初始化（或超时被重置）的时段为0，这里置NaN，
+%   以免轨迹虚假地跳回原点。
+% - 位移参考点取KF初始化后最初0.5 s内有效估计的均值，
+%   比用单个首次估计（本身含量测噪声）更稳。
+% ---------------------------------------------------------
+if isfield(logs,'log_ekf_state')
+    [time,stateData] = signalToTimeData(logs.log_ekf_state);
+
+    if size(stateData,2) >= 4
+        positionX = stateData(:,1);
+        positionY = stateData(:,2);
+        stateMask = all(isfinite(stateData(:,1:2)),2);
+
+        if isfield(logs,'log_ekf_initialized')
+            stateMask = stateMask & ...
+                interpolateBooleanSignal(logs.log_ekf_initialized,time);
+        else
+            stateMask = stateMask & ...
+                (abs(positionX) > 0 | abs(positionY) > 0);
+        end
+
+        positionX(~stateMask) = NaN;
+        positionY(~stateMask) = NaN;
+
+        validIndices = find(stateMask);
+
+        if numel(validIndices) >= 10
+            firstValidIndex = validIndices(1);
+            referenceMask = stateMask & ...
+                time <= time(firstValidIndex)+0.5;
+            referenceX = mean(positionX(referenceMask),'omitnan');
+            referenceY = mean(positionY(referenceMask),'omitnan');
+
+            displacementX = positionX-referenceX;
+            displacementY = positionY-referenceY;
+
+            fig = figure('Visible',visibilityValue, ...
+                'Name','EKF Target Displacement');
+            tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
+
+            nexttile;
+            plot(positionX,positionY,'LineWidth',1.15);
+            hold on;
+            plot(referenceX,referenceY,'o','MarkerSize',8,'LineWidth',1.3);
+            axis equal;
+            grid on;
+            xlabel('\hat{X}_B (m)');
+            ylabel('\hat{Y}_B (m)');
+            legend({'EKF估计轨迹','参考起点'},'Location','best');
+            title('Estimated Target Path in Base Frame');
+
+            nexttile;
+            legendLabels = {'\Delta X_B','\Delta Y_B'};
+            plot(time,displacementX,'LineWidth',1.15);
+            hold on;
+            plot(time,displacementY,'LineWidth',1.15);
+
+            if isfield(logs,'log_measurement_accepted')
+                acceptedMask = interpolateBooleanSignal( ...
+                    logs.log_measurement_accepted,time) & stateMask;
+                plot(time(acceptedMask),displacementX(acceptedMask), ...
+                    '.','MarkerSize',9);
+                plot(time(acceptedMask),displacementY(acceptedMask), ...
+                    '.','MarkerSize',9);
+                legendLabels = [legendLabels, ...
+                    {'接受帧 (X)','接受帧 (Y)'}];
+            end
+
+            yline(0,':');
+            grid on;
+            xlabel('Time (s)');
+            ylabel('Displacement from reference (m)');
+            legend(legendLabels,'Location','best');
+            title('EKF Estimated Target Displacement');
+
+            saveTestFigure(fig,figureFolder,'03b_ekf_target_displacement');
+            createdFigures{end+1} = ...
+                '03b_ekf_target_displacement'; %#ok<SAGROW>
+            if closeFiguresAfterSave, close(fig); end
+        end
     end
 end
 
@@ -795,6 +962,128 @@ if strcmp(testType,'static') && ...
     if closeFiguresAfterSave, close(fig); end
 end
 
+% ---------------------------------------------------------
+% 图10：奇异度诊断
+%
+% sigma_min：6x7 相机雅可比（[v;omega]，相机坐标系表达）的最小奇异值，
+%   由 Redundant Visual Velocity Solver 每个控制周期计算。
+% singularity_scale：奇异值缩放。
+%   sigma_min <= sigma_stop               -> 0，任务速度完全归零；
+%   sigma_stop < sigma_min < sigma_warn   -> smoothstep 平滑降速；
+%   sigma_min >= sigma_warn               -> 1，正常速度。
+% damping_used：接近奇异时使用的阻尼系数。
+% 第三幅图对比 |qdot_raw|（求解器输出）与 |qdot_command|（终极保护后），
+% 奇异值缩放与加速度保护的实际效果都在这里。
+% 注意：sigma_min<=0 表示关节反馈超时导致 J_camera 被置零，不是真实奇异，
+% 绘图中已置为 NaN 跳过。
+% ---------------------------------------------------------
+if isfield(logs,'log_sigma_min')
+    [sigmaTime,sigmaData] = signalToTimeData(logs.log_sigma_min);
+    sigmaPlot = sigmaData(:,1);
+    sigmaPlot(sigmaPlot <= 0) = NaN;
+
+    fig = figure( ...
+        'Visible',visibilityValue, ...
+        'Name','Singularity Diagnostics');
+
+    tiledlayout( ...
+        3, ...
+        1, ...
+        'TileSpacing','compact', ...
+        'Padding','compact');
+
+    nexttile;
+    semilogy(sigmaTime,sigmaPlot,'LineWidth',1.15);
+    hold on;
+    if isfield(parameters,'singularity_sigma_warn')
+        yline( ...
+            parameters.singularity_sigma_warn, ...
+            '--', ...
+            sprintf( ...
+                '\\sigma_{warn} = %.4g', ...
+                parameters.singularity_sigma_warn));
+    end
+    if isfield(parameters,'singularity_sigma_stop')
+        yline( ...
+            parameters.singularity_sigma_stop, ...
+            '--', ...
+            sprintf( ...
+                '\\sigma_{stop} = %.4g', ...
+                parameters.singularity_sigma_stop));
+    end
+    grid on;
+    xlabel('Time (s)');
+    ylabel('\sigma_{min}');
+    title('Minimum Singular Value of J_{camera} (6x7, log scale)');
+
+    nexttile;
+    legendEntries = {};
+    hold on;
+    if isfield(logs,'log_singularity_scale')
+        [scaleTime,scaleData] = ...
+            signalToTimeData(logs.log_singularity_scale);
+        plot(scaleTime,scaleData(:,1),'LineWidth',1.15);
+        legendEntries{end+1} = 'singularity_{scale}';
+    end
+    if isfield(logs,'log_damping_used')
+        [dampingTime,dampingData] = ...
+            signalToTimeData(logs.log_damping_used);
+        plot(dampingTime,dampingData(:,1),'LineWidth',1.0);
+        legendEntries{end+1} = 'damping_{used}';
+    end
+    yline(1,':');
+    ylim([-0.05 1.10]);
+    grid on;
+    xlabel('Time (s)');
+    ylabel('Scale');
+    if ~isempty(legendEntries)
+        legend(legendEntries,'Location','best');
+    end
+    title('Singularity Scale and Damping');
+
+    nexttile;
+    if isfield(logs,'log_qdot_raw') && ...
+            isfield(logs,'log_qdot_command')
+        [rawTime,rawData] = ...
+            signalToTimeData(logs.log_qdot_raw);
+        [commandTime,commandData] = ...
+            signalToTimeData(logs.log_qdot_command);
+        commandOnRawTime = interpolateData( ...
+            commandTime, ...
+            commandData, ...
+            rawTime, ...
+            'linear');
+
+        plot(rawTime,sqrt(sum(rawData.^2,2)),'LineWidth',1.0);
+        hold on;
+        plot( ...
+            rawTime, ...
+            sqrt(sum(commandOnRawTime.^2,2)), ...
+            'LineWidth',1.15);
+        legend( ...
+            {'|qdot_{raw}|','|qdot_{command}|'}, ...
+            'Location','best');
+    else
+        text(0.1,0.5,'qdot logs unavailable');
+    end
+    grid on;
+    xlabel('Time (s)');
+    ylabel('Joint speed (rad/s)');
+    title('Solver Output vs Guarded Joint Command');
+
+    saveTestFigure( ...
+        fig, ...
+        figureFolder, ...
+        '10_singularity_diagnostics');
+
+    createdFigures{end+1} = ...
+        '10_singularity_diagnostics'; %#ok<SAGROW>
+
+    if closeFiguresAfterSave
+        close(fig);
+    end
+end
+
 %% 10. 生成摘要
 
 summaryFile = fullfile(runFolder,'summary.txt');
@@ -828,33 +1117,147 @@ fprintf('============================================\n\n');
 function signal = getLoggedSignal(logName,simulationOutput)
 
 signal = [];
+sourceNames = currentModelSignalNames(logName);
 
 if ~isempty(simulationOutput)
     outputNames = simulationOutput.who;
 
-    if any(strcmp(outputNames,logName))
-        signal = simulationOutput.get(logName);
-        return;
+    for sourceIndex = 1:numel(sourceNames)
+        sourceName = sourceNames{sourceIndex};
+        if any(strcmp(outputNames,sourceName))
+            signal = simulationOutput.get(sourceName);
+            return;
+        end
     end
 
     if any(strcmp(outputNames,'logsout'))
         logsout = simulationOutput.get('logsout');
         if isa(logsout,'Simulink.SimulationData.Dataset')
-            try
-                element = logsout.getElement(logName);
-                if ~isempty(element)
-                    signal = element.Values;
-                    return;
+            for sourceIndex = 1:numel(sourceNames)
+                try
+                    element = logsout.getElement(sourceNames{sourceIndex});
+                    if ~isempty(element)
+                        signal = element.Values;
+                        return;
+                    end
+                catch
                 end
-            catch
             end
         end
     end
 end
 
-variableExists = evalin('base',sprintf('exist(''%s'',''var'')',logName));
+for sourceIndex = 1:numel(sourceNames)
+    sourceName = sourceNames{sourceIndex};
+    variableExists = evalin('base',sprintf('exist(''%s'',''var'')',sourceName));
+    if variableExists
+        signal = evalin('base',sourceName);
+        return;
+    end
+end
+
+end
+
+
+function sourceNames = currentModelSignalNames(logName)
+
+switch logName
+    case {'log_error','log_e'}
+        sourceNames = {'image_error','error','e'};
+    case 'log_ekf_state'
+        sourceNames = {'ekf_state','ekf_state_hat','kf_state','x_hat'};
+    case 'log_ekf_covariance'
+        sourceNames = {'ekf_covariance','kf_covariance','P_ekf'};
+    case 'log_ekf_velocity'
+        sourceNames = {'v_target_hat','ekf_velocity'};
+    case {'log_camera_velocity','log_v_camera_measured'}
+        sourceNames = {'camera_twist_measured','camera_velocity'};
+    case {'log_measurement_is_new','log_target_is_new'}
+        sourceNames = {'target_is_new','measurement_is_new'};
+    case 'log_safe_valid'
+        sourceNames = {'safe_valid'};
+    case 'log_controller_ok'
+        sourceNames = {'controller_ok'};
+    case 'log_ekf_initialized'
+        sourceNames = {'ekf_initialized'};
+    case 'log_measurement_accepted'
+        sourceNames = {'measurement_accepted'};
+    case 'log_joint_position'
+        sourceNames = {'joint_position'};
+    case 'log_joint_velocity'
+        sourceNames = {'joint_velocity'};
+    case 'log_v_norm_limited'
+        sourceNames = {'v_norm_limited'};
+    case 'log_saturation_active'
+        sourceNames = {'saturation_active','saturation'};
+    case 'log_acceleration_active'
+        sourceNames = {'acceleration_active','acceleration_limit'};
+    case 'log_target_data'
+        sourceNames = {'target_data'};
+    case 'log_u'
+        sourceNames = {'u'};
+    case 'log_v'
+        sourceNames = {'v'};
+    case 'log_target_depth'
+        sourceNames = {'target_depth','z'};
+    otherwise
+        sourceNames = {regexprep(logName,'^log_','')};
+end
+
+end
+
+
+function [logs,missingLogs] = deriveCurrentModelLogs(logs,missingLogs)
+
+if isfield(logs,'log_target_data')
+    [targetTime,targetData] = signalToTimeData(logs.log_target_data);
+    if size(targetData,2) >= 4
+        logs.log_u = timeseries(targetData(:,2),targetTime);
+        logs.log_v = timeseries(targetData(:,3),targetTime);
+        logs.log_target_depth = timeseries(targetData(:,4),targetTime);
+        missingLogs = setdiff(missingLogs, ...
+            {'log_u','log_v','log_target_depth'},'stable');
+
+        fx = getBaseScalar('fx',NaN);
+        fy = getBaseScalar('fy',NaN);
+        cx = getBaseScalar('cx',NaN);
+        cy = getBaseScalar('cy',NaN);
+        if all(isfinite([fx fy cx cy])) && fx > 0 && fy > 0
+            zMeas = [ ...
+                (targetData(:,2)-cx).*targetData(:,4)./fx, ...
+                (targetData(:,3)-cy).*targetData(:,4)./fy];
+            logs.log_z_meas = timeseries(zMeas,targetTime);
+            missingLogs(strcmp(missingLogs,'log_z_meas')) = [];
+        end
+    end
+end
+
+if ~isfield(logs,'log_saturation_active') && ...
+        isfield(logs,'log_velocity_scale')
+    [time,scale] = signalToTimeData(logs.log_velocity_scale);
+    logs.log_saturation_active = timeseries(double(scale(:,1)<1-1e-9),time);
+    missingLogs(strcmp(missingLogs,'log_saturation_active')) = [];
+end
+
+if ~isfield(logs,'log_acceleration_active') && ...
+        isfield(logs,'log_acceleration_scale')
+    [time,scale] = signalToTimeData(logs.log_acceleration_scale);
+    logs.log_acceleration_active = timeseries(double(scale(:,1)<1-1e-9),time);
+    missingLogs(strcmp(missingLogs,'log_acceleration_active')) = [];
+end
+
+end
+
+
+function value = getBaseScalar(variableName,defaultValue)
+
+value = defaultValue;
+variableExists = evalin('base',sprintf('exist(''%s'',''var'')',variableName));
 if variableExists
-    signal = evalin('base',logName);
+    candidate = evalin('base',variableName);
+    if isnumeric(candidate) && isscalar(candidate)
+        value = double(candidate);
+    end
 end
 
 end
@@ -1020,15 +1423,9 @@ for index = 1:numel(allLogNames)
     end
 end
 
-% 参数向量检查。
+% Initialize vector-interface diagnostics as unavailable; the current q_dot
+% model wires parameters as individual Constant blocks, not a parameter vector.
 metrics.parameterVector = struct('available',false);
-if isfield(parameters,'controller_parameters')
-    vector = double(parameters.controller_parameters(:));
-    metrics.parameterVector.available = true;
-    metrics.parameterVector.length = numel(vector);
-    metrics.parameterVector.expectedLength = 12;
-    metrics.parameterVector.lengthCorrect = numel(vector) == 12;
-end
 
 % 图像误差。
 metrics.imageError = struct('available',false);
@@ -1291,6 +1688,71 @@ if isfield(logs,'log_v_p') && isfield(logs,'log_v_ff')
     end
 end
 
+% 奇异度指标。
+metrics.singularity = struct('available',false);
+
+if isfield(logs,'log_sigma_min')
+    [time,sigmaData] = signalToTimeData(logs.log_sigma_min);
+    sigmaVector = sigmaData(:,1);
+    mask = time >= time(1)+options.analysisStartSec & ...
+        isfinite(sigmaVector);
+
+    if any(mask)
+        selectedSigma = sigmaVector(mask);
+        selectedTime = time(mask);
+        [minimumSigma,minimumIndex] = min(selectedSigma);
+
+        metrics.singularity.available = true;
+        metrics.singularity.minimum = minimumSigma;
+        metrics.singularity.median = median(selectedSigma);
+        metrics.singularity.maximum = max(selectedSigma);
+        metrics.singularity.timeOfMinimum = ...
+            selectedTime(minimumIndex);
+
+        if isfield(parameters,'singularity_sigma_stop') && ...
+                isfield(parameters,'singularity_sigma_warn')
+            metrics.singularity.stopThreshold = ...
+                parameters.singularity_sigma_stop;
+            metrics.singularity.warnThreshold = ...
+                parameters.singularity_sigma_warn;
+            metrics.singularity.belowWarnPercent = ...
+                100*mean(selectedSigma < ...
+                parameters.singularity_sigma_warn);
+            metrics.singularity.belowStopPercent = ...
+                100*mean(selectedSigma < ...
+                parameters.singularity_sigma_stop);
+        end
+    end
+end
+
+if isfield(logs,'log_singularity_scale')
+    [time,scaleData] = ...
+        signalToTimeData(logs.log_singularity_scale);
+    scaleVector = scaleData(:,1);
+    mask = time >= time(1)+options.analysisStartSec & ...
+        isfinite(scaleVector);
+
+    if any(mask)
+        metrics.singularity.scaleAvailable = true;
+        metrics.singularity.scaleMinimum = min(scaleVector(mask));
+        metrics.singularity.scaleMedian = median(scaleVector(mask));
+
+        if isfield(logs,'log_control_active')
+            activeMask = mask & interpolateBooleanSignal( ...
+                logs.log_control_active,time);
+
+            if any(activeMask)
+                metrics.singularity.scaleMedianWhileActive = ...
+                    median(scaleVector(activeMask));
+                metrics.singularity.scaleMeanWhileActive = ...
+                    mean(scaleVector(activeMask));
+                metrics.singularity.activeSamplePercent = ...
+                    100*mean(activeMask);
+            end
+        end
+    end
+end
+
 end
 
 
@@ -1305,11 +1767,14 @@ end
 
 function copyConfigurationFiles(runFolder)
 
-initCandidates = dir(fullfile(pwd,'**','init_single_camera_xy_tracking.m'));
-if ~isempty(initCandidates)
-    initSource = fullfile(initCandidates(1).folder,initCandidates(1).name);
+scriptDirectory = fileparts(mfilename('fullpath'));
+projectRoot = fileparts(scriptDirectory);
+initSource = fullfile(projectRoot,'config', ...
+    'init_single_camera_q_dot_tracking.m');
+
+if isfile(initSource)
     copyfile(initSource,fullfile(runFolder, ...
-        'init_single_camera_xy_tracking_snapshot.m'));
+        'init_single_camera_q_dot_tracking_snapshot.m'));
 end
 
 homeDirectory = getenv('HOME');
@@ -1361,8 +1826,9 @@ fprintf(fileID,'Controller and KF parameters\n');
 fprintf(fileID,'----------------------------\n');
 
 scalarNames = {'Ts','fx','fy','cx','cy','Z_hat','Kpx','Kpy','k_ff', ...
-    'ekf_gate_threshold','required_valid_frames','measurement_reset_timeout', ...
-    'ff_filter_tau','target_timeout_sec', ...
+    'ekf_gate_threshold','required_valid_frames', ...
+    'measurement_reset_timeout','task_velocity_filter_tau', ...
+    'target_timeout_sec', ...
     'joint_state_timeout_sec','camera_velocity_feedback_timeout_sec'};
 
 for index = 1:numel(scalarNames)
@@ -1488,6 +1954,56 @@ if metrics.controller.available
         fprintf(fileID,'RMS(v_ff)/RMS(v_p): %.12g\n', ...
             metrics.controller.feedforwardToProportionalRmsRatio);
     end
+end
+
+if metrics.singularity.available
+    fprintf(fileID,'\nSingularity diagnostics (6x7 camera Jacobian)\n');
+    fprintf(fileID,'----------------------------------------------\n');
+    fprintf(fileID,'sigma_min minimum: %.12g at %.6f s\n', ...
+        metrics.singularity.minimum, ...
+        metrics.singularity.timeOfMinimum);
+    fprintf(fileID,'sigma_min median: %.12g\n', ...
+        metrics.singularity.median);
+    fprintf(fileID,'sigma_min maximum: %.12g\n', ...
+        metrics.singularity.maximum);
+
+    if isfield(metrics.singularity,'warnThreshold')
+        fprintf(fileID, ...
+            'sigma_warn: %.12g | samples below: %.6f %%\n', ...
+            metrics.singularity.warnThreshold, ...
+            metrics.singularity.belowWarnPercent);
+        fprintf(fileID, ...
+            'sigma_stop: %.12g | samples below: %.6f %%\n', ...
+            metrics.singularity.stopThreshold, ...
+            metrics.singularity.belowStopPercent);
+    end
+end
+
+if isfield(metrics.singularity,'scaleAvailable')
+    fprintf(fileID,'singularity_scale minimum: %.12g\n', ...
+        metrics.singularity.scaleMinimum);
+    fprintf(fileID,'singularity_scale median: %.12g\n', ...
+        metrics.singularity.scaleMedian);
+
+    if isfield(metrics.singularity,'scaleMedianWhileActive')
+        fprintf(fileID, ...
+            'singularity_scale median while control_active: %.12g\n', ...
+            metrics.singularity.scaleMedianWhileActive);
+        fprintf(fileID, ...
+            'control_active sample ratio: %.6f %%\n', ...
+            metrics.singularity.activeSamplePercent);
+    end
+end
+
+if metrics.singularity.available || ...
+        isfield(metrics.singularity,'scaleAvailable')
+    fprintf(fileID,['Interpretation: sigma_min is the smallest singular value of the ' ...
+        'camera-frame 6x7 Jacobian. The solver scales qdot_raw by ' ...
+        'singularity_scale = smoothstep(sigma_min) between sigma_stop and ' ...
+        'sigma_warn, and returns zero below sigma_stop, so a small sigma_min ' ...
+        'slows or freezes the task no matter how large the image error is.\n' ...
+        'sigma_min <= 0 samples mean the joint feedback timed out and ' ...
+        'J_camera was zeroed, not a real singularity.\n']);
 end
 
 fprintf(fileID,'\nHow to interpret this test\n');

@@ -1,0 +1,101 @@
+Single-camera Base-frame KF tuning test summary
+================================================
+Test name: single_camera_base_kf_test
+Test type: generic
+Timestamp: 1012_214319
+Analysis start offset: 1.000 s
+
+Coordinate conventions
+----------------------
+z_meas: [X_C,Y_C], camera frame.
+ekf_state: [X_B,Y_B,Vx_B,Vy_B], Base frame.
+v_p, v_ff, v_issued: camera frame.
+
+Available logs: log_error, log_e, log_ekf_velocity, log_v_p, log_v_ff, log_v_issued, log_v_task_raw, log_camera_velocity, log_innovation_nis, log_measurement_is_new, log_target_is_new, log_measurement_accepted, log_safe_valid, log_controller_ok, log_ekf_initialized, log_v_camera_measured, log_joint_position, log_joint_velocity, log_qdot_raw, log_qdot_command, log_velocity_scale, log_acceleration_scale, log_position_scale, log_guard_valid, log_target_age, log_joint_age, log_target_data, log_sigma_min, log_singularity_scale, log_damping_used, log_solver_valid, log_control_active, log_kinematics_valid, log_target_visible, log_u, log_v, log_target_depth, log_z_meas, log_saturation_active, log_acceleration_active
+Missing logs: log_ekf_state, log_ekf_covariance, log_v_norm_limited, log_v_camera_measured_valid
+
+Controller and KF parameters
+----------------------------
+Ts: 0.01
+fx: 2057
+fy: 2054
+cx: 1000
+cy: 592
+Z_hat: 0.5
+Kpx: 1
+Kpy: 1
+k_ff: 0
+ekf_gate_threshold: 5.991
+required_valid_frames: 5
+measurement_reset_timeout: 2
+task_velocity_filter_tau: 0.04
+target_timeout_sec: 0.5
+joint_state_timeout_sec: 0.5
+camera_velocity_feedback_timeout_sec: 0.5
+P0:
+ 0.0025 0 0 0
+ 0 0.0025 0 0
+ 0 0 0.04 0
+ 0 0 0 0.04
+Q_ekf:
+ 2.5e-09 0 5e-07 0
+ 0 2.5e-09 0 5e-07
+ 5e-07 0 0.0001 0
+ 0 5e-07 0 0.0001
+R_ekf:
+ 1e-08 0
+ 0 1e-08
+
+Measured indicators
+-------------------
+Test duration: 65.540000 s
+New frame count: 683
+Valid new frame count: 683
+Accepted new frame count: 195
+New frame rate: 10.582584 Hz
+Measurement acceptance ratio: 28.550512 %
+NIS sample count: 441
+NIS mean: 13.0921710173
+NIS median: 6.56624724777
+NIS 95th percentile: 46.8076885677
+NIS 99th percentile: 83.7398448872
+NIS gate: 5.991
+NIS gate exceedance: 57.596372 %
+Image error RMS normalized: 0.304508293097 0.184436293316
+Image error max abs normalized: 0.486144871172 0.288218111003
+Image error RMS pixels: 626.3735589 378.832146471
+Image error max abs pixels: 1000 592
+Measured camera velocity RMS (m/s): 0.0339400257885 0.0218054036465 0.0226762453248 0.0613224415238 0.0672043324652 0.0240442630467
+Measured camera velocity max abs (m/s): 0.139573829629 0.073398448797 0.0959976069705 0.187258642184 0.253190133912 0.107071906604
+Camera velocity feedback valid ratio: NaN %
+Maximum issued XY speed: 0.433620619357 m/s
+RMS issued XY speed: 0.131707324157 m/s
+RMS(v_ff)/RMS(v_p): 0
+
+Singularity diagnostics (6x7 camera Jacobian)
+----------------------------------------------
+sigma_min minimum: 0.191694601852 at 11.360000 s
+sigma_min median: 0.194997491539
+sigma_min maximum: 0.203764531066
+sigma_warn: 0.01 | samples below: 0.000000 %
+sigma_stop: 0.005 | samples below: 0.000000 %
+singularity_scale minimum: 1
+singularity_scale median: 1
+singularity_scale median while control_active: 1
+control_active sample ratio: 65.903890 %
+Interpretation: sigma_min is the smallest singular value of the camera-frame 6x7 Jacobian. The solver scales qdot_raw by singularity_scale = smoothstep(sigma_min) between sigma_stop and sigma_warn, and returns zero below sigma_stop, so a small sigma_min slows or freezes the task no matter how large the image error is.
+sigma_min <= 0 samples mean the joint feedback timed out and J_camera was zeroed, not a real singularity.
+
+How to interpret this test
+--------------------------
+Use the four-state, covariance, NIS, status and controller plots to separate coordinate-transform, measurement-noise, model and controller problems.
+
+Created figures
+---------------
+01_image_error
+02_camera_frame_measurement
+05_controller_components_xy
+06_nis_time_and_distribution
+07_measurement_and_status_states
+08_camera_velocity_feedback
+10_singularity_diagnostics
