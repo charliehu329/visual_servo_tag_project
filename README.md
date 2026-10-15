@@ -1,6 +1,6 @@
 # velocity_servo_tag · q_dot
 
-`single_version` 分支当前使用的 FR3 单目 AprilTag 视觉伺服版本。Python 负责相机检测和硬件启动；Simulink 完成控制、运动学求解及关节命令保护，直接发送七维关节速度。
+`new` 分支当前使用的 FR3 单目 AprilTag 视觉伺服版本。Python 负责相机检测和硬件启动；Simulink 完成控制、运动学求解及关节命令保护，直接发送七维关节速度。
 
 ```text
 USB 相机 → AprilTag 检测 → Simulink q_dot → 关节速度控制器 → FR3
@@ -15,8 +15,8 @@ Ubuntu 24.04、ROS 2 Jazzy、已配置的 franka_ros2；MATLAB、Simulink、ROS 
 | 文件／目录 | 用途 |
 | --- | --- |
 | `velocity_servo_tag/vision/` | `camera.py` 读取相机，`apriltag_detector.py` 发布检测结果 |
-| `launch/detector_handware.launch.py` | 总入口，组合检测器与硬件启动 |
-| `launch/apriltag_detector.launch.py`、`launch/hardware.launch.py` | 单独启动检测器／FR3 硬件与控制器 |
+| `launch/detector_handware.launch.py` | 唯一总入口，组合检测器与 FR3 硬件启动 |
+| `launch/apriltag_detector.launch.py`、`launch/fr3_hardware.launch.py` | 单独启动检测器／FR3 硬件与控制器 |
 | `config/velocity_servo_tag.yaml` | 相机与检测参数，使用 `apriltag_detector` 配置段 |
 | `config/controllers.yaml`、`config/urdf/fr3.urdf` | 底层控制器配置／Simulink 运动学模型 |
 | `simulink_q_dot/config/init_single_camera_q_dot_tracking.m` | 控制、标定和安全参数初始化 |
@@ -59,7 +59,7 @@ ros2 launch velocity_servo_tag detector_handware.launch.py \
   start_hardware:=true robot_ip:=172.16.0.2 use_rviz:=false
 ```
 
-常用参数：`start_hardware=false`、`start_detector=true`、`load_gripper=false`、`use_rviz=false`、`robot_ip=172.16.0.2`；`params_file` 可指定检测器 YAML。查看参数：
+常用参数：`start_hardware=false`、`start_detector=true`、`use_rviz=false`、`robot_ip=172.16.0.2`；`params_file` 可指定检测器 YAML。查看参数：
 
 ```bash
 ros2 launch velocity_servo_tag detector_handware.launch.py --show-args

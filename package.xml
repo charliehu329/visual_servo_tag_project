@@ -11,10 +11,9 @@
   <version>0.2.0</version>
 
   <description>
-    Complete AprilTag and Simulink visual-servo package for
-    Franka Research 3, including camera detection, Cartesian-to-joint
-    velocity mapping, safety watchdogs, Franka hardware bringup,
-    and joint velocity command forwarding.
+    AprilTag and Simulink visual-servo package for Franka Research 3,
+    including USB camera detection, Franka hardware bringup, RViz,
+    and the joint velocity controller configuration.
   </description>
 
   <maintainer email="harry@todo.todo">
@@ -51,10 +50,6 @@
 
   <depend>
     sensor_msgs
-  </depend>
-
-  <depend>
-    std_srvs
   </depend>
 
   <!-- ===================================================== -->
@@ -125,21 +120,13 @@
     python3-opencv
   </exec_depend>
 
-  <exec_depend>
-    python3-serial
-  </exec_depend>
-
-  <exec_depend>
-    pinocchio
-  </exec_depend>
-
   <!-- RViz只在use_rviz:=true时使用。 -->
 
   <exec_depend>
     rviz2
   </exec_depend>
 
-    <!-- pupil-apriltags通过pip安装，因此不在rosdep中声明。 -->
+  <!-- pupil-apriltags通过pip安装，因此不在rosdep中声明。 -->
 
   <!-- ===================================================== -->
   <!-- Test dependencies -->

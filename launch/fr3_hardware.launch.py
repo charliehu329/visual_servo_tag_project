@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-hardware.launch.py
+fr3_hardware.launch.py
 
 q_dot 直出版本的 Franka FR3 底层启动文件。
 
@@ -24,7 +24,7 @@ Simulink 直接向 joint_velocity_example_controller 的速度命令 topic
 
 启动示例：
 
-ros2 launch velocity_servo_tag hardware.launch.py \
+ros2 launch velocity_servo_tag fr3_hardware.launch.py \
     robot_ip:=172.16.0.2 \
     use_rviz:=false
 """
@@ -36,7 +36,6 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
-    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -75,19 +74,12 @@ def generate_launch_description():
     # =========================================================
 
     robot_ip = LaunchConfiguration("robot_ip")
-    load_gripper = LaunchConfiguration("load_gripper")
     use_rviz = LaunchConfiguration("use_rviz")
 
     declare_robot_ip = DeclareLaunchArgument(
         "robot_ip",
         default_value="172.16.0.2",
         description="Franka FR3 IP address.",
-    )
-
-    declare_load_gripper = DeclareLaunchArgument(
-        "load_gripper",
-        default_value="false",
-        description="Load Franka Hand gripper.",
     )
 
     declare_use_rviz = DeclareLaunchArgument(
@@ -107,7 +99,7 @@ def generate_launch_description():
         launch_arguments={
             "robot_type": "fr3",
             "robot_ip": robot_ip,
-            "load_gripper": load_gripper,
+            "load_gripper": "false",
             "use_fake_hardware": "false",
             "controllers_yaml": controllers_yaml,
         }.items(),
@@ -138,14 +130,6 @@ def generate_launch_description():
         output="screen",
     )
 
-    # 等待 Franka hardware 和 controller_manager 初始化。
-    delayed_velocity_controller = TimerAction(
-        period=5.0,
-        actions=[
-            velocity_controller_spawner,
-        ],
-    )
-
     # =========================================================
     # RViz
     # =========================================================
@@ -165,8 +149,6 @@ def generate_launch_description():
         arguments=[
             "--display-config",
             rviz_config,
-            "-f",
-            "world",
         ],
         condition=IfCondition(use_rviz),
         output="screen",
@@ -179,11 +161,10 @@ def generate_launch_description():
     return LaunchDescription(
         [
             declare_robot_ip,
-            declare_load_gripper,
             declare_use_rviz,
 
             franka_bringup,
-            delayed_velocity_controller,
+            velocity_controller_spawner,
             rviz_node,
         ]
     )

@@ -16,7 +16,7 @@ q_dot 直出版本总启动入口。
         ↓
     /simulink/target_joints_velocities
         ↓
-    hardware.launch.py
+    fr3_hardware.launch.py
         ↓
     joint_velocity_example_controller
         ↓
@@ -70,7 +70,6 @@ def generate_launch_description():
     # =========================================================
 
     robot_ip = LaunchConfiguration("robot_ip")
-    load_gripper = LaunchConfiguration("load_gripper")
     use_rviz = LaunchConfiguration("use_rviz")
 
     start_hardware = LaunchConfiguration("start_hardware")
@@ -86,12 +85,6 @@ def generate_launch_description():
         "robot_ip",
         default_value="172.16.0.2",
         description="Franka FR3 IP address.",
-    )
-
-    declare_load_gripper = DeclareLaunchArgument(
-        "load_gripper",
-        default_value="false",
-        description="Load Franka Hand gripper.",
     )
 
     declare_use_rviz = DeclareLaunchArgument(
@@ -156,7 +149,7 @@ def generate_launch_description():
         [
             FindPackageShare("velocity_servo_tag"),
             "launch",
-            "hardware.launch.py",
+            "fr3_hardware.launch.py",
         ]
     )
 
@@ -167,7 +160,6 @@ def generate_launch_description():
         condition=IfCondition(start_hardware),
         launch_arguments={
             "robot_ip": robot_ip,
-            "load_gripper": load_gripper,
             "use_rviz": use_rviz,
         }.items(),
     )
@@ -179,7 +171,6 @@ def generate_launch_description():
     return LaunchDescription(
         [
             declare_robot_ip,
-            declare_load_gripper,
             declare_use_rviz,
             declare_start_hardware,
             declare_start_detector,

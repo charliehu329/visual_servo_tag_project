@@ -1,6 +1,6 @@
 # velocity_servo_tag.yaml
 #
-# AprilTag检测、相机速度映射和Franka关节速度命令节点的统一配置。
+# AprilTag USB 相机检测节点配置。
 
 
 apriltag_detector:
@@ -45,77 +45,3 @@ apriltag_detector:
     use_dynamic_camera_info: true
     camera_info_topic: "/lens/camera_info"
     show_window: true
-
-
-velocity_mapper_node:
-  ros__parameters:
-    urdf_path: ""
-    end_effector_frame: "fr3_link8"
-
-    T_end_effector_camera: [
-      0.685367986922,  0.727986036940,  0.017522914211, -0.0495,
-      -0.727707409066,  0.683826802626,  0.053130319028,  0.0191,
-      0.026695491993, -0.049165374297,  0.998433831897,  0.1396,
-      0.0,             0.0,             0.0,             1.0
-    ]
-
-    dry_run: false
-
-    joint_state_topic: "/franka/joint_states"
-    visual_velocity_topic: "/simulink/camera_velocity"
-    command_topic: "/velocity_mapper_node/target_joints_velocities"
-
-
-velocity_command_node:
-  ros__parameters:
-    # 默认zero最安全。
-    # 真正接收mapper速度时由launch覆盖为topic。
-    mode: "zero"
-
-    publish_rate_hz: 120.0
-
-    # 相对于FR3官方关节速度上限的最终保护比例。
-    max_velocity_scale: 0.80
-
-    # 底层命令桥接层的加速度限制，单位rad/s²。
-    max_joint_accelerations:
-      - 0.50
-      - 0.50
-      - 0.50
-      - 0.50
-      - 0.50
-      - 0.50
-      - 0.50
-
-    # mapper崩溃或停止发布后，超过此时间开始平滑减速。
-    target_velocity_timeout_sec: 0.15
-
-    input_topic: "/velocity_mapper_node/target_joints_velocities"
-    command_topic: "/joint_velocity_example_controller/commands"
-
-
-zoom_controller_node:
-  ros__parameters:
-    # Keep true until HOMEZF and serial behavior are supervised on the robot PC.
-    dry_run: true
-    calibration_file: ""
-    serial_port: "/dev/serial/by-id/CHANGE_ME"
-    serial_baud: 115200
-    serial_command_timeout_sec: 35.0
-    distance_timeout_sec: 0.5
-    bootstrap_distance_m: 0.8
-    zoom_deadband_steps: 3
-    focus_deadband_steps: 3
-    max_fx_fy_disagreement_steps: 80.0
-    target_topic: "/lens/target_intrinsics"
-    distance_topic: "/apriltag_detector/target_position"
-    state_topic: "/lens/zoom_state"
-    camera_info_topic: "/lens/camera_info"
-    camera_frame_id: "camera_optical_frame"
-
-
-
-
-
-
-

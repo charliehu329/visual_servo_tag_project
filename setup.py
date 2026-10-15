@@ -95,8 +95,8 @@ setup(
     maintainer_email="harry@todo.todo",
 
     description=(
-        "Complete AprilTag and Simulink visual-servo "
-        "package for Franka Research 3."
+        "AprilTag and Simulink visual-servo package "
+        "for Franka Research 3."
     ),
 
     license="Apache-2.0",
@@ -111,21 +111,6 @@ setup(
                 "apriltag_detector = "
                 "velocity_servo_tag.vision."
                 "apriltag_detector:main"
-            ),
-            (
-                "velocity_mapper_node = "
-                "velocity_servo_tag."
-                "velocity_mapper_node:main"
-            ),
-            (
-                "velocity_command_node = "
-                "velocity_servo_tag."
-                "velocity_command_node:main"
-            ),
-            (
-                "zoom_controller_node = "
-                "velocity_servo_tag."
-                "zoom_controller_node:main"
             ),
         ],
     },

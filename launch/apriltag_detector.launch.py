@@ -15,8 +15,9 @@ apriltag_detector.launch.py
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -48,21 +49,14 @@ def generate_launch_description():
     # =========================================================
     # AprilTag detector
     #
-    # 使用 python3 -m 启动，而不是 launch_ros.actions.Node，
-    # 这样不依赖 setup.py 中是否已经注册 console_scripts。
-    # 与当前可直接运行方式保持一致：
-    # python3 -m velocity_servo_tag.vision.apriltag_detector
+    # 使用 ROS 2 标准 Node action 启动 setup.py 注册的可执行程序。
     # =========================================================
 
-    apriltag_detector = ExecuteProcess(
-        cmd=[
-            "python3",
-            "-m",
-            "velocity_servo_tag.vision.apriltag_detector",
-            "--ros-args",
-            "--params-file",
-            params_file,
-        ],
+    apriltag_detector = Node(
+        package="velocity_servo_tag",
+        executable="apriltag_detector",
+        name="apriltag_detector",
+        parameters=[params_file],
         output="screen",
     )
 
