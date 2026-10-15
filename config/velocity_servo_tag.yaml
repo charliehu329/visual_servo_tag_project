@@ -10,6 +10,37 @@ apriltag_detector:
     camera_height: 720
     camera_fps: 60.0
 
+    # 第二台 USB 相机：同轮采集、独立检测，不显示第二路预览。
+    # camera_2_index 请填写实际设备编号，不能与 camera_index 相同。
+    camera_2_enabled: true
+    camera_2_index: 0
+    camera_2_width: 1280
+    camera_2_height: 720
+    camera_2_fps: 60.0
+    # 两路采集频率必须一致；软件 grab 完成时间差上限，不是曝光同步保证。
+    camera_pair_max_delta_ms: 60.0
+    # 两路成功取图 FPS 的日志统计周期，单位 s。
+    camera_fps_log_interval_s: 20.0
+
+    camera_2_tag_family: "tag36h11"
+    camera_2_target_tag_id: 0
+    camera_2_detector_threads: 8
+    camera_2_quad_decimate: 4.0
+    camera_2_quad_sigma: 0.0
+    camera_2_refine_edges: true
+    camera_2_decode_sharpening: 0.25
+    camera_2_uv_filter_alpha: 1.0
+    # 第二路内参需换成实际标定值；当前只发送 u/v，不用深度范围筛选。
+    camera_2_fx: 2057.0
+    camera_2_fy: 2054.0
+    camera_2_cx: 1000.0
+    camera_2_cy: 592.0
+    camera_2_tag_size_m: 0.10
+    camera_2_depth_filter_alpha: 0.4
+    camera_2_depth_min_m: 0.10
+    camera_2_depth_max_m: 2.00
+    camera_2_max_edge_ratio: 1.8
+
     tag_family: "tag36h11"
     target_tag_id: 0
 
@@ -41,6 +72,7 @@ apriltag_detector:
     # 四边形。正常倾斜通常不超过 1.3，0 表示不检查。
     max_edge_ratio: 1.8
 
+    # 消息顺序：[valid1, valid2, u1, v1, u2, v2]，无效路坐标为 0。
     target_position_topic: "/apriltag_detector/target_position"
     use_dynamic_camera_info: true
     camera_info_topic: "/lens/camera_info"
