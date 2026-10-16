@@ -123,7 +123,46 @@ singularity_sigma_warn = 0.01;
 % sigma_min ≥ singularity_sigma_warn     正常速度
 
 
-%% 7. 零空间关节姿态与深度安全区
+%% 7. 深度定点参数与零空间
+
+% ---- 深度定点（双目/深度模型 stereo_camera_q_dot 使用）----
+%
+% solver_parameters 索引表（模型内 Solver Parameters 单个 Constant 块按此顺序组装）：
+%   solver_parameters(1) = visual_damping_min
+%   solver_parameters(2) = visual_damping_max
+%   solver_parameters(3) = singularity_sigma_stop
+%   solver_parameters(4) = singularity_sigma_warn
+%   solver_parameters(5) = z_ref
+%   solver_parameters(6) = depth_deadband
+%   solver_parameters(7) = depth_gain
+%   solver_parameters(8) = depth_rate_max
+%   solver_parameters(9) = visual_min_depth
+%
+% 奇异度判据已改为“任务雅可比” [J_image;J_depth]（3x7）的最小奇异值，
+% 不再是 6x7 相机雅可比的第 6 个奇异值。阈值仍沿用下面两个小量，
+% 因此本改动目前不改变原有速度缩放行为；待实测 sigma_min 典型值后再定阈值。
+
+% 目标深度给定值，单位：m。深度控制把相机到目标的距离调到该值。
+z_ref = 1.50;
+
+% 深度死区，单位：m。深度误差小于该值时不产生深度动作，避免来回抖动。
+depth_deadband = 0.03;
+
+% 深度误差到深度变化速度的增益，单位：1/s。
+% 闭环近似一阶，时间常数 ≈ 1/depth_gain。0.30 对应约 3.3 s。
+depth_gain = 0.30;
+
+% 深度变化速度上限，单位：m/s。
+depth_rate_max = 0.15;
+
+% 视觉雅可比允许使用的最小深度，单位：m。
+% z 不大于该值时，当前视觉求解不会继续使用该深度。
+visual_min_depth = 0.01;
+
+
+% ---- 以下为单目模型 single_camera_q_dot 仍在引用的旧参数 ----
+% 单目模型的 Solver Parameters 仍按老顺序引用这 4 个变量，因此保留在此。
+% 深度模型已不再使用它们，保留只为两个 init 可以混用。
 
 % 零空间关节中心回避增益。
 nullspace_posture_gain = 0.000001;
@@ -135,10 +174,6 @@ depth_safe_max = 5.50;
 
 % 目标深度超出安全区时的恢复增益。
 depth_safety_gain = 0.02;
-
-% 视觉雅可比允许使用的最小深度，单位：m。
-% z 不大于该值时，当前视觉求解不会继续使用该深度。
-visual_min_depth = 0.01;
 
 
 %% 8. 最终 7 维关节速度命令保护

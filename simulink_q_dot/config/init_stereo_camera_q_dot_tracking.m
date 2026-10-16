@@ -51,7 +51,7 @@ measurement_reset_timeout = 2.0;
 
 % 控制器使能。
 enable_proportional = true;
-enable_ekf_feedforward = true;
+enable_ekf_feedforward = false;
 controller_enable = true;
 
 % 保留与原模型一致的 ROS 模式标志。
@@ -123,18 +123,39 @@ singularity_sigma_warn = 0.01;
 % sigma_min ≥ singularity_sigma_warn     正常速度
 
 
-%% 7. 零空间关节姿态与深度安全区
+%% 7. 深度定点参数
 
-% 零空间关节中心回避增益。
-nullspace_posture_gain = 0.000001;
+% solver_parameters 索引表（模型内 Solver Parameters 单个 Constant 块按此顺序组装）：
+%   solver_parameters(1) = visual_damping_min
+%   solver_parameters(2) = visual_damping_max
+%   solver_parameters(3) = singularity_sigma_stop
+%   solver_parameters(4) = singularity_sigma_warn
+%   solver_parameters(5) = z_ref
+%   solver_parameters(6) = depth_deadband
+%   solver_parameters(7) = depth_gain
+%   solver_parameters(8) = depth_rate_max
+%   solver_parameters(9) = visual_min_depth
+%
+% 说明：
+% 1) 奇异度判据已改为“任务雅可比” [J_image;J_depth]（3x7）的最小奇异值，
+%    不再是 6x7 相机雅可比的第 6 个奇异值；奇异缩放只作用于图像主任务。
+% 2) 阈值仍沿用两个小量，因此改动目前不改变原有速度缩放行为；
+%    待实测 sigma_min 典型值后再定阈值。
+% 3) 已移除 nullspace_posture_gain / depth_safe_min / depth_safe_max /
+%    depth_safety_gain：姿态回归任务删除，深度由安全区推回改为定点控制。
 
-% 目标深度安全区，单位：m。
-% 深度处于该区间内时，深度安全任务不主动工作。
-depth_safe_min = 0.10;
-depth_safe_max = 5.50;
+% 目标深度给定值，单位：m。深度控制把相机到目标的距离调到该值。
+z_ref = 1.50;
 
-% 目标深度超出安全区时的恢复增益。
-depth_safety_gain = 0.02;
+% 深度死区，单位：m。深度误差小于该值时不产生深度动作，避免来回抖动。
+depth_deadband = 0.1;
+
+% 深度误差到深度变化速度的增益，单位：1/s。
+% 闭环近似一阶，时间常数 ≈ 1/depth_gain。0.30 对应约 3.3 s。
+depth_gain = 0.30;
+
+% 深度变化速度上限，单位：m/s。
+depth_rate_max = 0.15;
 
 % 视觉雅可比允许使用的最小深度，单位：m。
 % z 不大于该值时，当前视觉求解不会继续使用该深度。
@@ -149,6 +170,7 @@ visual_min_depth = 0.01;
 joint_soft_margin = 0.05;
 
 % 零空间任务使用的名义关节构型，单位：rad。
+% 改值已经没有意义，纯占位
 joint_nominal_configuration = [ ...
     0.0; ...
    -pi/4; ...
@@ -292,9 +314,11 @@ addBody( ...
 assert(Ts > 0.0, 'Ts 必须大于 0。');
 assert(Z_hat > visual_min_depth, ...
     'Z_hat 必须大于 visual_min_depth。');
-assert(depth_safe_min > visual_min_depth && ...
-    depth_safe_max > depth_safe_min, ...
-    '深度安全区参数不合法。');
+assert(z_ref > visual_min_depth, ...
+    'z_ref 必须大于 visual_min_depth。');
+assert(depth_deadband >= 0.0 && depth_gain >= 0.0 && ...
+    depth_rate_max > 0.0, ...
+    '深度定点参数不合法。');
 assert(singularity_sigma_warn > singularity_sigma_stop && ...
     singularity_sigma_stop >= 0.0, ...
     '奇异值阈值参数不合法。');
