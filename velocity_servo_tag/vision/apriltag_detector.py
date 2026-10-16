@@ -2,17 +2,106 @@
 """
 apriltag_detector.py
 
-功能：同轮采集两台 USB 相机的 RGB 图像，分别检测 AprilTag 中心并发布。
-输入：launch 加载 config/velocity_servo_tag.yaml 中的 ROS 2 参数。
-      camera_* 为第一路配置，camera_2_* 为第二路配置；检测和滤波对象独立。
-      camera_pair_max_delta_ms 为两次 grab 完成时间差上限，单位 ms。
-输出：target_position_topic，std_msgs/msg/Float64MultiArray：
-      [valid1, valid2, u1, v1, u2, v2]。
-      valid=1 表示对应相机读取成功且检测有效，否则为 0，坐标也为 0。
-      超过抓帧时间差阈值时两路均无效；该阈值不保证硬件曝光同步。
-      仅第一路可以显示预览；第二路不显示预览。
-接口：AprilTagDetector.detect(image, require_depth=False) 返回 [u, v, 0] 或 None。
-      require_depth=True 保留检测器原有几何深度接口，节点不发布深度。
+概括：
+    创建 AprilTagDetector 检测器和 AprilTagDetectorNode ROS 2 节点。
+    节点读取普通 USB 相机图像，使用 pupil_apriltags 检测指定的
+    tag36h11 标签，并发布标签中心的像素坐标，供 Simulink 中的
+    基础单目 IBVS 控制器使用。
+
+输入：
+    USB 相机 RGB 图像，numpy.ndarray，格式为 (H, W, 3)。
+
+    ROS 2 yaml 参数：
+        camera_index：
+            USB 相机编号。
+        camera_width、camera_height：
+            相机图像分辨率，单位 pixel。
+        camera_fps：
+            目标相机帧率和检测定时器频率，单位 Hz。
+        tag_family：
+            AprilTag 标签族，默认 tag36h11。
+        target_tag_id：
+            需要跟踪的标签 ID，默认 0。
+        detector_threads：
+            pupil_apriltags 使用的检测线程数。
+        quad_decimate：
+            四边形检测降采样倍数。1.0 表示不降采样。
+        quad_sigma：
+            四边形检测前的高斯模糊标准差。
+        refine_edges：
+            是否对检测到的标签边缘进行细化。
+        decode_sharpening：
+            标签编码区域的锐化强度。
+        uv_filter_alpha：
+            标签中心低通滤波系数，范围 (0, 1]。
+            1.0 表示不进行时间滤波。
+        camera_fx、camera_fy、camera_cx、camera_cy：
+            相机内参，单位 pixel。
+        tag_size_m：
+            AprilTag 检测角点之间的实际边长，单位 m。
+        depth_filter_alpha：
+            深度一阶低通滤波系数，范围 (0, 1]。
+        depth_min_m、depth_max_m：
+            可接受的深度范围，单位 m。
+        target_position_topic：
+            检测结果发布 topic。
+        show_window：
+            是否显示实时检测窗口。
+
+输出：
+    ROS topic：
+        /apriltag_detector/target_position
+
+    消息类型：
+        std_msgs/msg/Float64MultiArray
+
+    数据顺序：
+        [valid, u, v, depth_m]
+
+        valid：
+            1.0 表示检测有效，0.0 表示未检测到目标。
+        u、v：
+            标签中心的像素坐标，单位 pixel。
+        depth_m：
+            由标签像素边长几何反推的 Z 方向深度，单位 m：
+            Z = camera_fx * tag_size_m / 标签像素平均边长。
+            本节点不做位姿估计，因此该深度不依赖 apriltag 的正交迭代。
+
+接口：
+    AprilTagDetector.detect(image)
+        检测成功时返回 [u, v, depth_m]。
+        检测失败时返回 None。
+
+    AprilTagDetectorNode
+        按 camera_fps 读取相机并持续发布检测结果。
+
+方法：
+    1. 从 USB 相机读取 RGB 图像。
+    2. 将 RGB 图像转换为灰度图。
+    3. 使用 pupil_apriltags 检测 tag36h11 标签。
+    4. 只保留 target_tag_id 指定的目标。
+    5. 对目标中心 u、v 进行一阶低通滤波。
+    6. 由标签的像素边长几何反推深度 depth_m。
+    7. 发布 [valid, u, v, depth_m]。
+    8. 在预览图像中绘制标签边框、中心和检测信息。
+
+备注：
+    1. 本版本不做位姿估计。apriltag 的正交迭代位姿求解在退化视角下会
+       打印 "Error, more than one new minima found." 并返回不可信的位姿
+       （旋转矩阵行列式可能不为 1），深度随之失效。本节点只用 u、v 与
+       几何深度，因此关闭位姿估计。代价：标签倾斜时几何深度略偏大
+       （倾斜 10° 约 +1%，30° 约 +8%，40° 约 +15%）。
+    2. 当前实验使用 tag36h11、ID 0，推荐打印标签最外侧正方形
+       实际边长为 12 cm，以提高约 1 m 距离下快速运动时的检测稳定性。
+    3. 未检测到目标或相机读取失败时发布 [0.0, 0.0, 0.0]。
+       Simulink 必须先检查 valid；valid=0.0 时必须输出六维零速度。
+    4. 本节点只使用 pupil_apriltags，不提供其他检测后端回退。
+       如果依赖未安装，节点会在启动时直接给出安装提示。
+    5. 运行本节点时不能同时启动原有 visual_servo_law，否则两个节点
+       会同时占用 USB 相机，并同时向控制链路发送视觉信息。
+    6. tag_size_m 必须等于标签的实际边长（tag36h11 为最外侧黑色方形
+       的边长，不含白边），深度与它成反比。建议把标签放在已知距离处
+       核对一次读数，偏差超过 5% 就先修正 tag_size_m 或相机内参。
 """
 
 import time
@@ -253,13 +342,12 @@ class AprilTagDetector:
 
     def detect(
         self,
-        image,
-        require_depth=True
+        image
     ):
         """
-        功能：检测 RGB 图像中的指定 AprilTag，并独立滤波。
-        输入：image 为 RGB 图像；require_depth 表示是否检查和计算深度。
-        输出：成功返回 [u, v, depth_m]，失败返回 None；关闭深度时 depth_m 为 0。
+        检测 RGB 图像中的指定 AprilTag。
+
+        检测成功时返回 [u, v, depth_m]，失败时返回 None。
         """
 
         if image is None:
@@ -370,7 +458,7 @@ class AprilTagDetector:
             edge_pixel
         )
 
-        if require_depth and not (
+        if not (
             self.depth_min_m <= raw_depth <= self.depth_max_m
         ):
             self.last_drop_reason = (
@@ -388,7 +476,7 @@ class AprilTagDetector:
         filtered_center = self.filter_center(
             raw_center
         )
-        filtered_depth = self.filter_depth(raw_depth) if require_depth else 0.0
+        filtered_depth = self.filter_depth(raw_depth)
 
         self.last_raw_center = raw_center.copy()
         self.last_corners = corners.copy()
@@ -412,9 +500,7 @@ class AprilTagDetectorNode(Node):
 
     def __init__(self):
         """
-        功能：从 ROS 2 参数初始化两路相机、检测器和发布器。
-        输入：无显式参数；配置由 launch 加载的 YAML 提供。
-        输出：无返回值；建立相机对象和采集定时器。
+        从 ROS 2 参数初始化相机、检测器和发布器。
         """
 
         super().__init__("apriltag_detector")
@@ -427,11 +513,6 @@ class AprilTagDetectorNode(Node):
         self.declare_parameter("camera_width", 640)
         self.declare_parameter("camera_height", 480)
         self.declare_parameter("camera_fps", 60.0)
-        self.declare_parameter("camera_2_enabled", False)
-        self.declare_parameter("camera_2_index", 0)
-        self.declare_parameter("camera_2_width", 640)
-        self.declare_parameter("camera_2_height", 480)
-        self.declare_parameter("camera_2_fps", 60.0)
 
         self.declare_parameter(
             "tag_family",
@@ -490,22 +571,6 @@ class AprilTagDetectorNode(Node):
             self.get_parameter(
                 "camera_fps"
             ).value
-        )
-
-        self.camera_2_enabled = bool(
-            self.get_parameter("camera_2_enabled").value
-        )
-        self.camera_2_index = int(
-            self.get_parameter("camera_2_index").value
-        )
-        self.camera_2_width = int(
-            self.get_parameter("camera_2_width").value
-        )
-        self.camera_2_height = int(
-            self.get_parameter("camera_2_height").value
-        )
-        self.camera_2_fps = float(
-            self.get_parameter("camera_2_fps").value
         )
 
         self.tag_family = str(
@@ -595,29 +660,6 @@ class AprilTagDetectorNode(Node):
             ).value
         )
 
-        self.declare_parameter("camera_pair_max_delta_ms", 60.0)
-        self.camera_pair_max_delta_ms = float(
-            self.get_parameter("camera_pair_max_delta_ms").value
-        )
-        self.declare_parameter("camera_fps_log_interval_s", 20.0)
-        self.camera_fps_log_interval_s = float(
-            self.get_parameter("camera_fps_log_interval_s").value
-        )
-        # 第二路检测参数独立读取，避免两台相机共享滤波状态。
-        self.camera_2_detector_parameters = {}
-        for name in (
-            "tag_family", "target_tag_id", "detector_threads",
-            "quad_decimate", "quad_sigma", "refine_edges",
-            "decode_sharpening", "uv_filter_alpha", "camera_fx",
-            "camera_fy", "camera_cx", "camera_cy", "tag_size_m",
-            "depth_filter_alpha", "depth_min_m", "depth_max_m", "max_edge_ratio",
-        ):
-            parameter_name = "camera_2_" + name.removeprefix("camera_")
-            self.declare_parameter(parameter_name, getattr(self, name))
-            self.camera_2_detector_parameters[name] = self.get_parameter(
-                parameter_name
-            ).value
-
         self.validate_parameters()
 
         # =====================================================
@@ -646,31 +688,12 @@ class AprilTagDetectorNode(Node):
             max_edge_ratio=self.max_edge_ratio,
         )
 
-        self.detector_2 = None
-        if self.camera_2_enabled:
-            self.detector_2 = AprilTagDetector(**self.camera_2_detector_parameters)
-
         self.camera = USBCamera(
             camera_index=self.camera_index,
             width=self.camera_width,
             height=self.camera_height,
             fps=int(round(self.camera_fps))
         )
-        self.camera_2 = None
-        self.camera_2_image = None
-        self.camera_2_timer = None
-        if self.camera_2_enabled:
-            try:
-                self.camera_2 = USBCamera(
-                    camera_index=self.camera_2_index,
-                    width=self.camera_2_width,
-                    height=self.camera_2_height,
-                    fps=int(round(self.camera_2_fps))
-                )
-            except Exception:
-                self.camera.release()
-                super().destroy_node()
-                raise
 
         # =====================================================
         # ROS 通信和运行状态
@@ -696,9 +719,8 @@ class AprilTagDetectorNode(Node):
         self.last_pixel_velocity = None
         # 检测相机实时读取的频率
         # =====================================================
-        # 分别统计两路成功取得 RGB 图像的频率，与检测成功率无关。
+        # 统计 camera.read() 成功返回图像的实际频率。
         self.successful_frame_count = 0
-        self.successful_frame_count_2 = 0
         self.fps_measurement_start = time.monotonic()
         # =====================================================
 
@@ -733,28 +755,8 @@ class AprilTagDetectorNode(Node):
 
     def validate_parameters(self):
         """
-        功能：检查两路相机和 ROS 2 节点参数是否合法。
-        输入：无显式参数；读取节点已保存的配置。
-        输出：合法时无返回值；非法时抛出 ValueError。
+        检查相机和 ROS 2 节点参数是否合法。
         """
-
-        if not np.isfinite(self.camera_pair_max_delta_ms) or self.camera_pair_max_delta_ms <= 0.0:
-            raise ValueError("camera_pair_max_delta_ms 必须为大于 0 的有限数值。")
-        if not np.isfinite(self.camera_fps_log_interval_s) or self.camera_fps_log_interval_s <= 0.0:
-            raise ValueError("camera_fps_log_interval_s 必须为大于 0 的有限数值。")
-        if not np.isfinite(self.camera_fps) or self.camera_fps < 0.5:
-            raise ValueError("camera_fps 必须为不小于 0.5 的有限数值。")
-        if self.camera_2_enabled:
-            if self.camera_2_fps != self.camera_fps:
-                raise ValueError("双相机采集时 camera_fps 和 camera_2_fps 必须相同。")
-            if self.camera_2_index < 0:
-                raise ValueError("camera_2_index 不能小于 0。")
-            if self.camera_2_index == self.camera_index:
-                raise ValueError("两台相机的设备编号不能相同。")
-            if self.camera_2_width <= 0 or self.camera_2_height <= 0:
-                raise ValueError("第二台相机的图像宽度和高度必须大于 0。")
-            if not np.isfinite(self.camera_2_fps) or self.camera_2_fps < 0.5:
-                raise ValueError("camera_2_fps 必须为不小于 0.5 的有限数值。")
 
         if self.camera_index < 0:
             raise ValueError(
@@ -800,32 +802,42 @@ class AprilTagDetectorNode(Node):
                 "target_position_topic 不能为空。"
             )
 
-    def publish_target(self, feature, feature_2=None):
+    def publish_target(
+        self,
+        feature
+    ):
         """
-        功能：发布两路目标的有效标志和像素坐标。
-        输入：feature、feature_2 为各自检测结果；None 表示该路无效。
-        输出：无返回值；发布 [valid1, valid2, u1, v1, u2, v2]。
+        发布一次有效的 AprilTag 中心位置和深度。
         """
 
         message = Float64MultiArray()
         message.data = [
-            1.0 if feature is not None else 0.0,
-            1.0 if feature_2 is not None else 0.0,
-            float(feature[0]) if feature is not None else 0.0,
-            float(feature[1]) if feature is not None else 0.0,
-            float(feature_2[0]) if feature_2 is not None else 0.0,
-            float(feature_2[1]) if feature_2 is not None else 0.0,
+            1.0,
+            float(feature[0]),
+            float(feature[1]),
+            float(feature[2]),
         ]
-        self.position_publisher.publish(message)
+
+        self.position_publisher.publish(
+            message
+        )
 
     def publish_invalid_target(self):
         """
-        功能：发布双路无效消息。
-        输入：无。
-        输出：无返回值；发布六个 0。
+        发布一次目标无效消息。
         """
 
-        self.publish_target(None, None)
+        message = Float64MultiArray()
+        message.data = [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ]
+
+        self.position_publisher.publish(
+            message
+        )
 
     def draw_detection(
         self,
@@ -834,9 +846,7 @@ class AprilTagDetectorNode(Node):
         pixel_velocity=None
     ):
         """
-        功能：在第一路预览中绘制标签边框和像素中心。
-        输入：image 为 RGB 图像，feature 为检测结果或 None；pixel_velocity 为可选速度。
-        输出：无返回值；更新第一路窗口，按 q 停止节点。
+        绘制标签边框、中心和当前检测信息。
         """
 
         display_image = cv2.cvtColor(
@@ -899,7 +909,8 @@ class AprilTagDetectorNode(Node):
                 (
                     f"id={self.target_tag_id}, "
                     f"u={feature[0]:.1f}, "
-                    f"v={feature[1]:.1f}"
+                    f"v={feature[1]:.1f}, "
+                    f"z={feature[2]:.3f} m"
                 ),
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -933,97 +944,133 @@ class AprilTagDetectorNode(Node):
             self.publish_invalid_target()
             rclpy.shutdown()
 
-    def log_camera_fps(self, image, image_2):
-        """
-        功能：按 YAML 配置周期统计并打印两台相机成功取图的实际 FPS。
-        输入：image、image_2 为两路 RGB 图像，None 表示对应一路取图失败。
-        输出：无返回值；到达周期时打印日志并重置计数和统计起点。
-        """
-
-        if image is not None:
-            self.successful_frame_count += 1
-        if image_2 is not None:
-            self.successful_frame_count_2 += 1
-
-        measurement_now = time.monotonic()
-        elapsed = measurement_now - self.fps_measurement_start
-        if elapsed >= self.camera_fps_log_interval_s:
-            self.get_logger().info(
-                f"Successful camera-read FPS: camera1={self.successful_frame_count / elapsed:.2f}, "
-                f"camera2={self.successful_frame_count_2 / elapsed:.2f} "
-                f"(enabled={self.camera_2_enabled})."
-            )
-            self.successful_frame_count = 0
-            self.successful_frame_count_2 = 0
-            self.fps_measurement_start = measurement_now
-
     def camera_callback(self):
         """
-        功能：同轮抓取两路图像，统计 FPS、检查时间差，分别检测并统一发布。
-        输入：无显式参数；使用相机对象和 YAML 时间差阈值。
-        输出：无返回值；发布 [valid1, valid2, u1, v1, u2, v2]。
-              抓帧完成时间差超过阈值时，两路均无效；只预览第一路。
+        读取一帧图像、检测目标并发布结果。
         """
 
-        grabbed = self.camera.grab()
-        first_time = time.monotonic()
-        grabbed_2 = False
-        second_time = None
-        if self.camera_2 is not None:
-            grabbed_2 = self.camera_2.grab()
-            second_time = time.monotonic()
+        image = self.camera.read()
 
-        # 两路均先抓帧，再解码；这里衡量软件抓帧完成时间，不是曝光时间。
-        image = self.camera.retrieve() if grabbed else None
-        self.camera_2_image = (
-            self.camera_2.retrieve() if grabbed_2 else None
-        )
-        # 采集成功即计数，即使随后因同步超限或未检测到标签而丢弃。
-        self.log_camera_fps(image, self.camera_2_image)
-        self.last_camera_pair_delta_ms = None
-        if grabbed and grabbed_2:
-            self.last_camera_pair_delta_ms = abs(second_time - first_time) * 1000.0
-            if self.last_camera_pair_delta_ms > self.camera_pair_max_delta_ms:
-                self.detector.reset_tracking_state()
-                self.detector_2.reset_tracking_state()
-                self.publish_invalid_target()
+        if image is None:
+            self.detector.reset_tracking_state()
+            self.last_detection_time = None
+            self.last_detection_feature = None
+            self.last_pixel_velocity = None
+            self.publish_invalid_target()
+
+            if self.target_was_detected:
                 self.get_logger().warn(
-                    f"Camera pair dropped: grab delta={self.last_camera_pair_delta_ms:.2f} ms "
-                    f"> {self.camera_pair_max_delta_ms:.2f} ms.",
+                    "Camera image is unavailable. "
+                    "Publishing invalid target."
+                )
+
+            self.target_was_detected = False
+            return
+
+        self.successful_frame_count += 1
+        fps_measurement_now = time.monotonic()
+        fps_elapsed = (
+            fps_measurement_now -
+            self.fps_measurement_start
+        )
+
+        if fps_elapsed >= 20.0:
+            actual_camera_fps = (
+                self.successful_frame_count /
+                fps_elapsed
+            )
+
+            self.get_logger().info(
+                "Successful camera-read FPS: "
+                f"{actual_camera_fps:.2f}"
+            )
+
+            self.successful_frame_count = 0
+            self.fps_measurement_start = (
+                fps_measurement_now
+            )
+
+        feature = self.detector.detect(
+            image
+        )
+
+        if feature is None:
+            self.last_detection_time = None
+            self.last_detection_feature = None
+            self.last_pixel_velocity = None
+            self.publish_invalid_target()
+
+            drop_reason = self.detector.last_drop_reason
+
+            if drop_reason is not None:
+                self.get_logger().warn(
+                    f"Frame dropped: {drop_reason}. "
+                    "Publishing invalid target.",
                     throttle_duration_sec=1.0
                 )
-                return
 
-        feature = self.detector.detect(image, require_depth=False)
-        feature_2 = None
-        if self.detector_2 is not None:
-            feature_2 = self.detector_2.detect(
-                self.camera_2_image, require_depth=False
+            if self.target_was_detected:
+                self.get_logger().warn(
+                    "Target lost. "
+                    "Publishing invalid target."
+                )
+
+            self.target_was_detected = False
+        else:
+            detection_time = time.monotonic()
+
+            if (
+                self.last_detection_time is not None and
+                self.last_detection_feature is not None
+            ):
+                delta_time = (
+                    detection_time -
+                    self.last_detection_time
+                )
+
+                if delta_time > 0.0:
+                    self.last_pixel_velocity = (
+                        (
+                            feature[:2] -
+                            self.last_detection_feature[:2]
+                        ) / delta_time
+                    )
+                else:
+                    self.last_pixel_velocity = None
+            else:
+                self.last_pixel_velocity = None
+
+            self.last_detection_time = detection_time
+            self.last_detection_feature = feature.copy()
+
+            self.publish_target(
+                feature
             )
-        self.publish_target(feature, feature_2)
 
-        if self.show_window and image is not None:
-            self.draw_detection(image, feature)
+            if not self.target_was_detected:
+                self.get_logger().info(
+                    "Target detected."
+                )
+
+            self.target_was_detected = True
+
+        if self.show_window:
+            self.draw_detection(
+                image,
+                feature,
+                self.last_pixel_velocity
+            )
 
     def destroy_node(self):
         """
-        功能：停止采集，释放两路相机和窗口，然后销毁 ROS 2 节点。
-        输入：无。
-        输出：父类 destroy_node() 的返回值。
+        释放相机和 OpenCV 窗口，然后销毁 ROS 2 节点。
         """
-
-        self.camera_timer.cancel()
-        if self.camera_2_timer is not None:
-            self.camera_2_timer.cancel()
 
         if rclpy.ok():
             self.publish_invalid_target()
 
         if self.camera is not None:
             self.camera.release()
-        if self.camera_2 is not None:
-            self.camera_2.release()
-        self.camera_2_image = None
 
         if self.show_window:
             cv2.destroyAllWindows()

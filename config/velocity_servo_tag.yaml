@@ -5,7 +5,7 @@
 
 apriltag_detector:
   ros__parameters:
-    camera_index: 2
+    camera_index: 0
     camera_width: 1280
     camera_height: 720
     camera_fps: 60.0
