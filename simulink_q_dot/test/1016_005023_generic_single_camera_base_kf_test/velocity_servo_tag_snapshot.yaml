@@ -1,0 +1,47 @@
+# velocity_servo_tag.yaml
+#
+# AprilTag USB 相机检测节点配置。
+
+
+apriltag_detector:
+  ros__parameters:
+    camera_index: 2
+    camera_width: 1280
+    camera_height: 720
+    camera_fps: 60.0
+
+    tag_family: "tag36h11"
+    target_tag_id: 0
+
+    detector_threads: 8
+    quad_decimate: 4.0
+    quad_sigma: 0.0
+    refine_edges: true
+    decode_sharpening: 0.25
+
+    uv_filter_alpha: 1.0
+
+    camera_fx: 2057.0
+    camera_fy: 2054.0
+    camera_cx: 1000.0
+    camera_cy: 592.0
+
+    # tag36h11 标签最外侧黑色方形的边长，不含白边。
+    # 几何深度 Z = camera_fx * tag_size_m / 标签像素边长，对该值 1:1 敏感，
+    # 改之前请用尺量一次实际边长。
+    tag_size_m: 0.10
+
+    depth_filter_alpha: 0.4
+    # 几何深度法的深度窗口。原来的 0.01~5.80 m 几乎不过滤任何异常值；
+    # 这里按实际工作范围收紧，超出即丢帧并在终端打印原因。
+    depth_min_m: 0.10
+    depth_max_m: 2.00
+
+    # 四边形边长比 max(edge)/min(edge) 上限：剔除被裁切、遮挡或误检的
+    # 四边形。正常倾斜通常不超过 1.3，0 表示不检查。
+    max_edge_ratio: 1.8
+
+    target_position_topic: "/apriltag_detector/target_position"
+    use_dynamic_camera_info: true
+    camera_info_topic: "/lens/camera_info"
+    show_window: true

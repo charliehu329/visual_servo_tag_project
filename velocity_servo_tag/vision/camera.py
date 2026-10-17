@@ -182,6 +182,27 @@ class USBCamera:
 
         return image_rgb
 
+    def grab(self):
+        """
+        功能：抓取下一帧，暂不解码，供双相机先抓帧再取图使用。
+        输入：无。
+        输出：bool，True 表示抓帧成功，False 表示失败。
+        """
+
+        return self.capture.grab()
+
+    def retrieve(self):
+        """
+        功能：解码最近一次 grab() 成功抓取的图像并转换为 RGB。
+        输入：无；调用前应先成功执行 grab()。
+        输出：RGB numpy.ndarray；解码失败时返回 None。
+        """
+
+        success, image_bgr = self.capture.retrieve()
+        if not success or image_bgr is None:
+            return None
+        return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
     def release(self):
         """
         释放摄像头资源。
