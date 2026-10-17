@@ -62,8 +62,11 @@ class StereoDepthEstimator:
         if self.max_reprojection_error_px <= 0 or not 0 < self.min_ray_angle_deg < 90:
             raise ValueError("重投影阈值必须大于 0，最小射线夹角必须在 (0, 90) 度内。")
 
+        # 三角化使用去畸变后的归一化坐标，因此投影矩阵只包含外参，不再乘内参 K。
+        # 以第一相机为参考系：P1 = [I | 0]，P2 = [R | T]；T 的米制单位决定输出单位。
         self.projection_1 = np.column_stack((np.eye(3), np.zeros(3)))
         self.projection_2 = np.column_stack((self.rotation, self.translation))
+        # projectPoints 接收 Rodrigues 旋转向量，预先转换以供后续重投影检查使用。
         self.rotation_vector_2 = cv2.Rodrigues(self.rotation)[0]
         self.last_invalid_reason = None
 
@@ -91,36 +94,48 @@ class StereoDepthEstimator:
         if any(point.shape != (2,) or not np.all(np.isfinite(point)) for point in pixels):
             self.last_invalid_reason = "像素坐标必须为两个有限数值。"
             return None
+        # 不指定输出投影矩阵时，undistortPoints 同时去除镜头畸变和内参影响，
+        # 得到归一化成像坐标 (x, y)，对应相机坐标系中的视线方向 [x, y, 1]。
         normalized = [
             cv2.undistortPoints(point.reshape(1, 1, 2), matrix, distortion).reshape(2, 1)
             for point, matrix, distortion in zip(pixels, self.camera_matrices, self.distortions)
         ]
         ray1 = np.r_[normalized[0].ravel(), 1.0]
+        # R 将第一相机坐标变换到第二相机；用 R.T 将第二条视线转回第一相机系。
+        # 此处只转换方向，不转换视线起点，因此不需要加平移 T。
         ray2 = self.rotation.T @ np.r_[normalized[1].ravel(), 1.0]
         cosine = np.dot(ray1, ray2) / (np.linalg.norm(ray1) * np.linalg.norm(ray2))
+        # 浮点误差可能使余弦略超出 [-1, 1]；截断后再求夹角，避免 arccos 产生 NaN。
         angle = np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+        # 视线接近平行时，微小像素误差会引起很大的深度变化，提前拒绝此类结果。
         if not np.isfinite(angle) or angle < self.min_ray_angle_deg:
             self.last_invalid_reason = "两条射线夹角过小，深度不可靠。"
             return None
 
+        # 线性三角化：由两路观测和投影矩阵求齐次三维点 [Xh, Yh, Zh, W]。
         homogeneous = cv2.triangulatePoints(
             self.projection_1, self.projection_2, normalized[0], normalized[1]
         ).ravel()
+        # W 接近 0 表示点趋向无穷远，不能安全转换为有限的三维坐标。
         if not np.all(np.isfinite(homogeneous)) or abs(homogeneous[3]) < np.finfo(float).eps:
             self.last_invalid_reason = "三角化结果无效或位于无穷远。"
             return None
+        # 齐次坐标除以 W，恢复第一相机系中的米制坐标；Z 是光轴深度而非欧氏距离。
         xyz = homogeneous[:3] / homogeneous[3]
         xyz2 = self.rotation @ xyz + self.translation
+        # 检查点位于两台相机前方；第一相机的正深度由配置的正值深度范围保证。
         if not np.all(np.isfinite(xyz)) or xyz2[2] <= 0 or not self.min_depth_m <= xyz[2] <= self.max_depth_m:
             self.last_invalid_reason = "目标位于相机后方或超出允许深度范围。"
             return None
 
+        # 将三维点分别投回两张原始图像（包含内参和畸变），与输入像素比较。
+        # 两路误差都必须过关，用于过滤不符合双目几何关系的匹配或标定偏差。
         for pixel, matrix, distortion, rotation, translation in zip(
             pixels, self.camera_matrices, self.distortions,
             (np.zeros(3), self.rotation_vector_2), (np.zeros(3), self.translation)
         ):
             projected = cv2.projectPoints(xyz.reshape(1, 3), rotation, translation, matrix, distortion)[0].reshape(2)
-            error = np.linalg.norm(projected - pixel)
+            error = np.linalg.norm(projected - pixel)  # 原始图像上的二维欧氏距离，单位为像素。
             if not np.isfinite(error) or error > self.max_reprojection_error_px:
                 self.last_invalid_reason = "重投影误差过大，两路像素或标定不一致。"
                 return None
